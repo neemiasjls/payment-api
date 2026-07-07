@@ -1,0 +1,14 @@
+services:
+  api:
+    build: .
+    ports:
+      - "8080:8080"
+    environment:
+      ASPNETCORE_ENVIRONMENT: Development # cria o lojista demo
+      ConnectionStrings__Default: "Data Source=/data/paymentgateway.db"
+    volumes:
+      # O banco SQLite vive num volume: os dados sobrevivem ao recreate do container.
+      - gateway-data:/data
+
+volumes:
+  gateway-data:
