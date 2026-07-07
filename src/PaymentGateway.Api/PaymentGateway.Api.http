@@ -1,0 +1,95 @@
+### Fluxo de demonstração completo do Payment Gateway.
+### Rode a API (dotnet run) e execute as requisições em ordem.
+### A API key abaixo é a do lojista demo criado automaticamente em desenvolvimento.
+
+@baseUrl = http://localhost:5223
+@apiKey = pk_test_demo_1234567890abcdef
+
+### 0. Health check
+GET {{baseUrl}}/health
+
+### 1. Cadastrar um novo lojista (endpoint público — guarde a apiKey retornada!)
+POST {{baseUrl}}/api/merchants
+Content-Type: application/json
+
+{
+  "name": "Minha Loja Virtual",
+  "email": "contato@minhaloja.com.br",
+  "webhookUrl": "https://webhook.site/coloque-seu-id-aqui"
+}
+
+### 2. Autorizar um pagamento de R$ 150,00 (cartão de teste aprovado)
+POST {{baseUrl}}/api/payments
+Content-Type: application/json
+X-Api-Key: {{apiKey}}
+Idempotency-Key: pedido-0001
+
+{
+  "amountInCents": 15000,
+  "currency": "BRL",
+  "description": "Pedido #0001 - Tênis de corrida",
+  "card": {
+    "number": "4242424242424242",
+    "holderName": "NEEMIAS SILVA",
+    "expMonth": 12,
+    "expYear": 2030,
+    "cvv": "123"
+  }
+}
+
+### 3. Reenviar a MESMA requisição (mesma Idempotency-Key)
+###    -> retorna 200 com o MESMO pagamento, sem cobrar duas vezes
+POST {{baseUrl}}/api/payments
+Content-Type: application/json
+X-Api-Key: {{apiKey}}
+Idempotency-Key: pedido-0001
+
+{
+  "amountInCents": 15000,
+  "currency": "BRL",
+  "description": "Pedido #0001 - Tênis de corrida",
+  "card": {
+    "number": "4242424242424242",
+    "holderName": "NEEMIAS SILVA",
+    "expMonth": 12,
+    "expYear": 2030,
+    "cvv": "123"
+  }
+}
+
+### 4. Tentar pagar com cartão recusado pelo emissor
+POST {{baseUrl}}/api/payments
+Content-Type: application/json
+X-Api-Key: {{apiKey}}
+
+{
+  "amountInCents": 9900,
+  "description": "Pedido #0002",
+  "card": {
+    "number": "4000000000000002",
+    "holderName": "NEEMIAS SILVA",
+    "expMonth": 12,
+    "expYear": 2030,
+    "cvv": "123"
+  }
+}
+
+### 5. Listar pagamentos
+GET {{baseUrl}}/api/payments?page=1&pageSize=10
+X-Api-Key: {{apiKey}}
+
+### 6. Capturar o pagamento autorizado (troque o ID pelo retornado no passo 2)
+POST {{baseUrl}}/api/payments/COLOQUE-O-ID-AQUI/capture
+X-Api-Key: {{apiKey}}
+
+### 7. Consultar o saldo do lojista (valor capturado - taxa de 2,5%)
+GET {{baseUrl}}/api/merchants/me/balance
+X-Api-Key: {{apiKey}}
+
+### 8. Estornar o pagamento capturado
+POST {{baseUrl}}/api/payments/COLOQUE-O-ID-AQUI/refund
+X-Api-Key: {{apiKey}}
+
+### 9. Ver a trilha de eventos do pagamento (auditoria + webhooks)
+GET {{baseUrl}}/api/payments/COLOQUE-O-ID-AQUI/events
+X-Api-Key: {{apiKey}}
