@@ -7,7 +7,7 @@ using PaymentGateway.Services.Dtos;
 namespace PaymentGateway.Api.Controllers;
 
 [ApiController]
-[Route("api/payments")]
+[Route("api/v1/payments")]
 public class PaymentsController : ControllerBase
 {
     private readonly IPaymentService _payments;

@@ -87,8 +87,16 @@ public class WebhookDispatcher : BackgroundService
 
             try
             {
-                using var content = new StringContent(body, Encoding.UTF8, "application/json");
-                var response = await client.PostAsync(merchant.WebhookUrl, content, ct);
+                using var request = new HttpRequestMessage(HttpMethod.Post, merchant.WebhookUrl)
+                {
+                    Content = new StringContent(body, Encoding.UTF8, "application/json")
+                };
+
+                // Assinatura HMAC: o lojista valida que a notificação é autêntica.
+                if (merchant.WebhookSecret is not null)
+                    request.Headers.Add("X-Webhook-Signature", WebhookSigner.Sign(body, merchant.WebhookSecret));
+
+                var response = await client.SendAsync(request, ct);
 
                 if (response.IsSuccessStatusCode)
                 {

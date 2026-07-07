@@ -10,4 +10,7 @@ public class GatewayOptions
     /// 250 bps = 2,5%, próximo do MDR médio de cartão de crédito no Brasil.
     /// </summary>
     public int FeeBps { get; set; } = 250;
+
+    /// <summary>Máximo de requisições por minuto por API key (proteção contra abuso).</summary>
+    public int RateLimitPerMinute { get; set; } = 100;
 }

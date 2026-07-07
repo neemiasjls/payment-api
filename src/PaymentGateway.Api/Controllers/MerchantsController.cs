@@ -6,7 +6,7 @@ using PaymentGateway.Services.Dtos;
 namespace PaymentGateway.Api.Controllers;
 
 [ApiController]
-[Route("api/merchants")]
+[Route("api/v1/merchants")]
 public class MerchantsController : ControllerBase
 {
     private readonly IMerchantService _merchants;
@@ -24,7 +24,7 @@ public class MerchantsController : ControllerBase
         [FromBody] CreateMerchantRequest request, CancellationToken ct)
     {
         var response = await _merchants.RegisterAsync(request, ct);
-        return Created("/api/merchants/me", response);
+        return Created("/api/v1/merchants/me", response);
     }
 
     /// <summary>Dados do lojista autenticado.</summary>

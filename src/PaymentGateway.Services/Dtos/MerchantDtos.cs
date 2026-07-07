@@ -17,9 +17,10 @@ public class CreateMerchantRequest
 
 /// <summary>
 /// Resposta do cadastro: única vez em que a API key aparece em texto puro.
-/// Depois disso, só o hash existe no banco.
+/// Depois disso, só o hash existe no banco. O WebhookSecret (presente quando
+/// uma WebhookUrl foi informada) valida a assinatura das notificações.
 /// </summary>
-public record MerchantCreatedResponse(Guid Id, string Name, string Email, string ApiKey);
+public record MerchantCreatedResponse(Guid Id, string Name, string Email, string ApiKey, string? WebhookSecret);
 
 public record MerchantResponse(Guid Id, string Name, string Email, string? WebhookUrl, DateTime CreatedAtUtc)
 {

@@ -5,11 +5,14 @@
 @baseUrl = http://localhost:5223
 @apiKey = pk_test_demo_1234567890abcdef
 
-### 0. Health check
+### 0. Health check (consulta o banco de verdade)
 GET {{baseUrl}}/health
 
-### 1. Cadastrar um novo lojista (endpoint público — guarde a apiKey retornada!)
-POST {{baseUrl}}/api/merchants
+### 1. Cadastrar um novo lojista (endpoint público)
+###    Guarde a apiKey E o webhookSecret retornados — só aparecem UMA vez!
+###    O webhookSecret valida a assinatura HMAC (header X-Webhook-Signature)
+###    enviada em cada notificação de webhook.
+POST {{baseUrl}}/api/v1/merchants
 Content-Type: application/json
 
 {
@@ -19,7 +22,7 @@ Content-Type: application/json
 }
 
 ### 2. Autorizar um pagamento de R$ 150,00 (cartão de teste aprovado)
-POST {{baseUrl}}/api/payments
+POST {{baseUrl}}/api/v1/payments
 Content-Type: application/json
 X-Api-Key: {{apiKey}}
 Idempotency-Key: pedido-0001
@@ -39,7 +42,7 @@ Idempotency-Key: pedido-0001
 
 ### 3. Reenviar a MESMA requisição (mesma Idempotency-Key)
 ###    -> retorna 200 com o MESMO pagamento, sem cobrar duas vezes
-POST {{baseUrl}}/api/payments
+POST {{baseUrl}}/api/v1/payments
 Content-Type: application/json
 X-Api-Key: {{apiKey}}
 Idempotency-Key: pedido-0001
@@ -58,7 +61,7 @@ Idempotency-Key: pedido-0001
 }
 
 ### 4. Tentar pagar com cartão recusado pelo emissor
-POST {{baseUrl}}/api/payments
+POST {{baseUrl}}/api/v1/payments
 Content-Type: application/json
 X-Api-Key: {{apiKey}}
 
@@ -75,21 +78,21 @@ X-Api-Key: {{apiKey}}
 }
 
 ### 5. Listar pagamentos
-GET {{baseUrl}}/api/payments?page=1&pageSize=10
+GET {{baseUrl}}/api/v1/payments?page=1&pageSize=10
 X-Api-Key: {{apiKey}}
 
 ### 6. Capturar o pagamento autorizado (troque o ID pelo retornado no passo 2)
-POST {{baseUrl}}/api/payments/COLOQUE-O-ID-AQUI/capture
+POST {{baseUrl}}/api/v1/payments/COLOQUE-O-ID-AQUI/capture
 X-Api-Key: {{apiKey}}
 
 ### 7. Consultar o saldo do lojista (valor capturado - taxa de 2,5%)
-GET {{baseUrl}}/api/merchants/me/balance
+GET {{baseUrl}}/api/v1/merchants/me/balance
 X-Api-Key: {{apiKey}}
 
 ### 8. Estornar o pagamento capturado
-POST {{baseUrl}}/api/payments/COLOQUE-O-ID-AQUI/refund
+POST {{baseUrl}}/api/v1/payments/COLOQUE-O-ID-AQUI/refund
 X-Api-Key: {{apiKey}}
 
 ### 9. Ver a trilha de eventos do pagamento (auditoria + webhooks)
-GET {{baseUrl}}/api/payments/COLOQUE-O-ID-AQUI/events
+GET {{baseUrl}}/api/v1/payments/COLOQUE-O-ID-AQUI/events
 X-Api-Key: {{apiKey}}

@@ -5,6 +5,7 @@ using PaymentGateway.Domain.Enums;
 using PaymentGateway.Domain.Exceptions;
 using PaymentGateway.Services.Dtos;
 using PaymentGateway.Services.Security;
+using PaymentGateway.Services.Webhooks;
 
 namespace PaymentGateway.Services;
 
@@ -31,19 +32,21 @@ public class MerchantService : IMerchantService
             throw new DomainException("Já existe um lojista cadastrado com este e-mail.");
 
         var apiKey = ApiKeyHasher.GenerateApiKey();
+        var webhookSecret = request.WebhookUrl is null ? null : WebhookSigner.GenerateSecret();
 
         var merchant = new Merchant
         {
             Name = request.Name,
             Email = request.Email,
             WebhookUrl = request.WebhookUrl,
+            WebhookSecret = webhookSecret,
             ApiKeyHash = ApiKeyHasher.Hash(apiKey)
         };
 
         _db.Merchants.Add(merchant);
         await _db.SaveChangesAsync(ct);
 
-        return new MerchantCreatedResponse(merchant.Id, merchant.Name, merchant.Email, apiKey);
+        return new MerchantCreatedResponse(merchant.Id, merchant.Name, merchant.Email, apiKey, webhookSecret);
     }
 
     public Task<Merchant?> FindByApiKeyAsync(string apiKey, CancellationToken ct = default)

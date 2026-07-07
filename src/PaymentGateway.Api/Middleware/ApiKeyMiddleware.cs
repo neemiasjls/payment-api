@@ -60,7 +60,7 @@ public class ApiKeyMiddleware
         // Único endpoint de negócio aberto: o cadastro de lojista,
         // que é justamente onde a API key é criada.
         return HttpMethods.IsPost(context.Request.Method)
-               && string.Equals(path.Value?.TrimEnd('/'), "/api/merchants", StringComparison.OrdinalIgnoreCase);
+               && string.Equals(path.Value?.TrimEnd('/'), "/api/v1/merchants", StringComparison.OrdinalIgnoreCase);
     }
 
     private static Task WriteUnauthorizedAsync(HttpContext context, string detail)

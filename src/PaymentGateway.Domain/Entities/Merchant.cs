@@ -14,5 +14,11 @@ public class Merchant
     /// <summary>URL opcional para onde o gateway envia notificações de eventos (webhooks).</summary>
     public string? WebhookUrl { get; set; }
 
+    /// <summary>
+    /// Segredo usado para assinar (HMAC-SHA256) o corpo de cada webhook.
+    /// Permite ao lojista verificar que a notificação veio mesmo do gateway.
+    /// </summary>
+    public string? WebhookSecret { get; set; }
+
     public DateTime CreatedAtUtc { get; set; } = DateTime.UtcNow;
 }
