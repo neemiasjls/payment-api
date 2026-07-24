@@ -491,3 +491,6 @@ docs/GUIA-ENTREVISTA.md
 
 # Pasta antiga vazia
 API_banco/
+
+# Logs dos scripts de inicializacao
+logs/
