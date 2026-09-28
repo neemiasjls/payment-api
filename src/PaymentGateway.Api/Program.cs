@@ -25,6 +25,10 @@ try
         .ReadFrom.Configuration(context.Configuration)
         .ReadFrom.Services(services));
 
+    // Não anuncia o servidor (Kestrel) no cabeçalho "Server": menos
+    // informação de graça para quem está sondando a infraestrutura.
+    builder.WebHost.ConfigureKestrel(options => options.AddServerHeader = false);
+
     builder.Services.AddControllers();
 
     builder.Services.AddDbContext<AppDbContext>(options =>
@@ -127,6 +131,16 @@ try
             DbSeeder.Seed(db);
     }
 
+    // HTTPS obrigatório fora do ambiente local: HSTS instrui o navegador a
+    // nunca mais usar HTTP para este domínio, e o redirecionamento cobre o
+    // primeiro acesso. Em Development/Testing a API roda em HTTP puro.
+    if (!app.Environment.IsDevelopment() && !app.Environment.IsEnvironment("Testing"))
+    {
+        app.UseHsts();
+        app.UseHttpsRedirection();
+    }
+
+    app.UseMiddleware<SecurityHeadersMiddleware>();
     app.UseSerilogRequestLogging();
     app.UseMiddleware<ErrorHandlingMiddleware>();
     app.UseRateLimiter();

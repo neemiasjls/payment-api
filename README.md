@@ -1,7 +1,7 @@
 # 💳 Payment Gateway API
 
 ![.NET 10](https://img.shields.io/badge/.NET-10.0-512BD4?logo=dotnet)
-![Testes](https://img.shields.io/badge/testes-44%20passando-brightgreen)
+![Testes](https://img.shields.io/badge/testes-45%20passando-brightgreen)
 ![Licença](https://img.shields.io/badge/licen%C3%A7a-MIT-blue)
 ![Docker](https://img.shields.io/badge/docker-ready-2496ED?logo=docker&logoColor=white)
 
@@ -22,15 +22,16 @@ API de gateway de pagamentos construída em **C# / .NET 10**, simulando o núcle
 - **Autenticação por API key** — cada lojista recebe uma chave `pk_...` exibida uma única vez; apenas o hash SHA-256 é armazenado.
 - **Webhooks assinados (HMAC-SHA256)** — cada notificação leva o header `X-Webhook-Signature`; o lojista valida a autenticidade com o segredo `whsec_...` recebido no cadastro. Entrega em background com retentativas e backoff exponencial.
 - **Rate limiting** — 100 requisições/minuto por API key (particionado: um lojista abusivo não afeta os demais), com resposta `429` padronizada.
+- **Cabeçalhos de segurança e HTTPS** — `nosniff`, `X-Frame-Options`, CSP restritiva e `Cache-Control: no-store` em toda resposta; HSTS + redirecionamento para HTTPS fora do ambiente local; header `Server` removido.
 - **Health check real** — `/health` consulta o banco, pronto para load balancers e orquestradores.
 
 **Engenharia**
 - **Migrations do EF Core** — o schema do banco é versionado junto com o código.
 - **Logging estruturado com Serilog** — eventos pesquisáveis por propriedade, não texto solto.
-- **44 testes**: 36 unitários + 8 de integração com `WebApplicationFactory` (a API inteira exercitada via HTTP, incluindo middlewares e rate limiter).
+- **45 testes**: 36 unitários + 9 de integração com `WebApplicationFactory` (a API inteira exercitada via HTTP, incluindo middlewares e rate limiter).
 - **Warnings = erros** (`Directory.Build.props`): código com aviso não compila.
 - **Docker** multi-stage + docker-compose.
-- **CI no GitHub Actions** — build e testes a cada push.
+- **CI no GitHub Actions** — build, testes e verificação de pacotes vulneráveis a cada push; **Dependabot** mantém as dependências atualizadas.
 
 ## Arquitetura
 

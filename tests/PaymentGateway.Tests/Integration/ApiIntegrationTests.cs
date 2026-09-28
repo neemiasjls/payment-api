@@ -57,6 +57,18 @@ public class ApiIntegrationTests : IClassFixture<ApiFactory>
     }
 
     [Fact]
+    public async Task Respostas_TrazemHeadersDeSeguranca()
+    {
+        var response = await _client.GetAsync("/health");
+
+        Assert.Equal("nosniff", response.Headers.GetValues("X-Content-Type-Options").Single());
+        Assert.Equal("DENY", response.Headers.GetValues("X-Frame-Options").Single());
+        Assert.Equal("no-referrer", response.Headers.GetValues("Referrer-Policy").Single());
+        Assert.True(response.Headers.CacheControl?.NoStore);
+        Assert.False(response.Headers.Contains("Server"));
+    }
+
+    [Fact]
     public async Task Payments_SemApiKey_Retorna401()
     {
         var response = await _client.GetAsync("/api/v1/payments");

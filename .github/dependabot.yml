@@ -1,0 +1,16 @@
+# Dependabot abre PRs automaticamente quando sai versão nova (ou correção de
+# segurança) de um pacote NuGet ou de uma action usada no CI.
+version: 2
+updates:
+  - package-ecosystem: nuget
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      nuget:
+        patterns: ["*"]
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
