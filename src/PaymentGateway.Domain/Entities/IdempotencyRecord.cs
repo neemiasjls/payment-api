@@ -10,6 +10,8 @@ public class IdempotencyRecord
     public long Id { get; set; }
     public Guid MerchantId { get; set; }
     public string IdempotencyKey { get; set; } = string.Empty;
+    public string Operation { get; set; } = string.Empty;
+    public string RequestHash { get; set; } = string.Empty;
     public Guid PaymentId { get; set; }
     public DateTime CreatedAtUtc { get; set; } = DateTime.UtcNow;
 }

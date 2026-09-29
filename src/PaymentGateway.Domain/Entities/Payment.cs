@@ -21,10 +21,15 @@ public class Payment
 
     public string Currency { get; private set; } = "BRL";
 
-    // Dados sensíveis do cartão (número completo, CVV) NUNCA são persistidos,
-    // seguindo o princípio do PCI DSS. Guardamos só o necessário para exibição.
+    // Apenas metadados devolvidos pelo provedor; a API não recebe PAN ou CVV.
     public string CardLast4 { get; private set; } = string.Empty;
     public string CardBrand { get; private set; } = "Unknown";
+    public string Provider { get; private set; } = string.Empty;
+    public string? ProviderPaymentId { get; private set; }
+    public string? PendingOperation { get; private set; }
+
+    // Token de concorrência que funciona também no SQLite.
+    public int Version { get; private set; }
 
     public string? Description { get; private set; }
     public PaymentStatus Status { get; private set; }
@@ -38,6 +43,61 @@ public class Payment
     private Payment()
     {
         // Construtor exigido pelo EF Core.
+    }
+
+    public static Payment CreatePending(
+        Guid merchantId, long amountInCents, string currency, string? description, string provider)
+    {
+        if (amountInCents <= 0)
+            throw new DomainException("O valor do pagamento deve ser maior que zero.");
+        if (currency != "BRL")
+            throw new DomainException("A demonstração aceita apenas BRL.");
+
+        return new Payment
+        {
+            MerchantId = merchantId,
+            AmountInCents = amountInCents,
+            Currency = currency,
+            Description = description,
+            Provider = provider,
+            Status = PaymentStatus.Pending
+        };
+    }
+
+    public void ApplyAuthorization(
+        string providerPaymentId, PaymentStatus status, string? cardLast4,
+        string? cardBrand, string? declineReason)
+    {
+        if (Status is not (PaymentStatus.Pending or PaymentStatus.RequiresAction))
+            throw new DomainException($"Não é possível atualizar autorização em {Status}.");
+        if (status is not (PaymentStatus.Pending or PaymentStatus.RequiresAction or
+            PaymentStatus.Authorized or PaymentStatus.Declined))
+            throw new DomainException("Status de autorização inválido.");
+
+        ProviderPaymentId = providerPaymentId;
+        CardLast4 = cardLast4 ?? string.Empty;
+        CardBrand = cardBrand ?? "Unknown";
+        DeclineReason = declineReason;
+        Status = status;
+        Version++;
+    }
+
+    public void MarkOperationPending(string operation)
+    {
+        if (PendingOperation is not null && PendingOperation != operation)
+            throw new DomainException($"A operação {PendingOperation} ainda está pendente.");
+        PendingOperation = operation;
+        Version++;
+    }
+
+    public void DeclineAfterAuthorization(string reason)
+    {
+        if (Status != PaymentStatus.Authorized)
+            throw new DomainException($"Não é possível recusar pagamento em {Status}.");
+        Status = PaymentStatus.Declined;
+        DeclineReason = reason;
+        PendingOperation = null;
+        Version++;
     }
 
     public static Payment Authorize(
@@ -84,7 +144,9 @@ public class Payment
                 $"Só é possível capturar pagamentos autorizados. Status atual: {Status}.");
 
         Status = PaymentStatus.Captured;
+        PendingOperation = null;
         CapturedAtUtc = DateTime.UtcNow;
+        Version++;
     }
 
     /// <summary>Cancela uma autorização que ainda não foi capturada.</summary>
@@ -95,7 +157,9 @@ public class Payment
                 $"Só é possível cancelar pagamentos autorizados e não capturados. Status atual: {Status}.");
 
         Status = PaymentStatus.Voided;
+        PendingOperation = null;
         VoidedAtUtc = DateTime.UtcNow;
+        Version++;
     }
 
     /// <summary>Devolve o valor de um pagamento já capturado.</summary>
@@ -106,6 +170,8 @@ public class Payment
                 $"Só é possível estornar pagamentos capturados. Status atual: {Status}.");
 
         Status = PaymentStatus.Refunded;
+        PendingOperation = null;
         RefundedAtUtc = DateTime.UtcNow;
+        Version++;
     }
 }

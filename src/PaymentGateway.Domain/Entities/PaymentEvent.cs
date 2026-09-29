@@ -17,4 +17,11 @@ public class PaymentEvent
     public int DeliveryAttempts { get; set; }
     public DateTime? DeliveredAtUtc { get; set; }
     public string? LastDeliveryError { get; set; }
+
+    // O registro é a fonte da verdade da fila de saída. Um worker pode
+    // retomar eventos vencidos após reinício sem depender de memória local.
+    public DateTime? NextDeliveryAttemptAtUtc { get; set; }
+    public DateTime? DeliveryLeaseUntilUtc { get; set; }
+    public Guid? DeliveryLeaseToken { get; set; }
+    public DateTime? DeliverySkippedAtUtc { get; set; }
 }

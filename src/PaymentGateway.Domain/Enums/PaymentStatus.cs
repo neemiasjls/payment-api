@@ -8,6 +8,8 @@ namespace PaymentGateway.Domain.Enums;
 /// </summary>
 public enum PaymentStatus
 {
+    Pending,
+    RequiresAction,
     Authorized,
     Captured,
     Voided,

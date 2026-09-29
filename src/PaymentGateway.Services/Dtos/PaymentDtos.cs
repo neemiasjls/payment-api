@@ -15,28 +15,9 @@ public class CreatePaymentRequest
     [StringLength(500)]
     public string? Description { get; set; }
 
-    [Required]
-    public CardRequest Card { get; set; } = null!;
-}
-
-public class CardRequest
-{
-    [Required]
-    public string Number { get; set; } = string.Empty;
-
-    [Required, StringLength(200)]
-    public string HolderName { get; set; } = string.Empty;
-
-    [Range(1, 12)]
-    public int ExpMonth { get; set; }
-
-    [Range(2000, 2100)]
-    public int ExpYear { get; set; }
-
-    // O CVV é recebido para simular a autorização, mas jamais persistido:
-    // armazená-lo é proibido pelo PCI DSS mesmo criptografado.
-    [Required, StringLength(4, MinimumLength = 3)]
-    public string Cvv { get; set; } = string.Empty;
+    /// <summary>Identificador de PaymentMethod gerado no ambiente de testes do provedor.</summary>
+    [Required, StringLength(200, MinimumLength = 4)]
+    public string PaymentMethodId { get; set; } = string.Empty;
 }
 
 public record PaymentResponse(
@@ -51,9 +32,13 @@ public record PaymentResponse(
     DateTime CreatedAtUtc,
     DateTime? CapturedAtUtc,
     DateTime? VoidedAtUtc,
-    DateTime? RefundedAtUtc)
+    DateTime? RefundedAtUtc,
+    string Provider,
+    string? ProviderPaymentId,
+    string? PendingOperation,
+    string? ClientSecret)
 {
-    public static PaymentResponse FromEntity(Payment payment) => new(
+    public static PaymentResponse FromEntity(Payment payment, string? clientSecret = null) => new(
         payment.Id,
         payment.AmountInCents,
         payment.Currency,
@@ -65,7 +50,11 @@ public record PaymentResponse(
         payment.CreatedAtUtc,
         payment.CapturedAtUtc,
         payment.VoidedAtUtc,
-        payment.RefundedAtUtc);
+        payment.RefundedAtUtc,
+        payment.Provider,
+        payment.ProviderPaymentId,
+        payment.PendingOperation,
+        clientSecret);
 }
 
 public record PaymentEventResponse(

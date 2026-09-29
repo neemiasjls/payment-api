@@ -30,6 +30,8 @@ public class PaymentsController : ControllerBase
         [FromHeader(Name = "Idempotency-Key")] string? idempotencyKey,
         CancellationToken ct)
     {
+        if (string.IsNullOrWhiteSpace(idempotencyKey))
+            return MissingIdempotencyKey();
         var merchant = HttpContext.GetMerchant();
         var (payment, created) = await _payments.AuthorizeAsync(merchant.Id, request, idempotencyKey, ct);
 
@@ -65,30 +67,39 @@ public class PaymentsController : ControllerBase
     [HttpPost("{id:guid}/capture")]
     [ProducesResponseType<PaymentResponse>(StatusCodes.Status200OK)]
     [ProducesResponseType(StatusCodes.Status422UnprocessableEntity)]
-    public async Task<IActionResult> Capture(Guid id, CancellationToken ct)
+    public async Task<IActionResult> Capture(
+        Guid id, [FromHeader(Name = "Idempotency-Key")] string? idempotencyKey, CancellationToken ct)
     {
+        if (string.IsNullOrWhiteSpace(idempotencyKey))
+            return MissingIdempotencyKey();
         var merchant = HttpContext.GetMerchant();
-        return Ok(await _payments.CaptureAsync(merchant.Id, id, ct));
+        return Ok(await _payments.CaptureAsync(merchant.Id, id, idempotencyKey, ct));
     }
 
     /// <summary>Cancela uma autorização ainda não capturada.</summary>
     [HttpPost("{id:guid}/void")]
     [ProducesResponseType<PaymentResponse>(StatusCodes.Status200OK)]
     [ProducesResponseType(StatusCodes.Status422UnprocessableEntity)]
-    public async Task<IActionResult> VoidPayment(Guid id, CancellationToken ct)
+    public async Task<IActionResult> VoidPayment(
+        Guid id, [FromHeader(Name = "Idempotency-Key")] string? idempotencyKey, CancellationToken ct)
     {
+        if (string.IsNullOrWhiteSpace(idempotencyKey))
+            return MissingIdempotencyKey();
         var merchant = HttpContext.GetMerchant();
-        return Ok(await _payments.VoidAsync(merchant.Id, id, ct));
+        return Ok(await _payments.VoidAsync(merchant.Id, id, idempotencyKey, ct));
     }
 
     /// <summary>Estorna um pagamento capturado.</summary>
     [HttpPost("{id:guid}/refund")]
     [ProducesResponseType<PaymentResponse>(StatusCodes.Status200OK)]
     [ProducesResponseType(StatusCodes.Status422UnprocessableEntity)]
-    public async Task<IActionResult> Refund(Guid id, CancellationToken ct)
+    public async Task<IActionResult> Refund(
+        Guid id, [FromHeader(Name = "Idempotency-Key")] string? idempotencyKey, CancellationToken ct)
     {
+        if (string.IsNullOrWhiteSpace(idempotencyKey))
+            return MissingIdempotencyKey();
         var merchant = HttpContext.GetMerchant();
-        return Ok(await _payments.RefundAsync(merchant.Id, id, ct));
+        return Ok(await _payments.RefundAsync(merchant.Id, id, idempotencyKey, ct));
     }
 
     /// <summary>Trilha de eventos do pagamento (auditoria + status dos webhooks).</summary>
@@ -99,4 +110,12 @@ public class PaymentsController : ControllerBase
         var merchant = HttpContext.GetMerchant();
         return Ok(await _payments.GetEventsAsync(merchant.Id, id, ct));
     }
+
+    private IActionResult MissingIdempotencyKey() => BadRequest(new ProblemDetails
+    {
+        Status = StatusCodes.Status400BadRequest,
+        Title = "Idempotency-Key obrigatória",
+        Detail = "Informe uma chave única no header Idempotency-Key para esta operação.",
+        Instance = HttpContext.Request.Path
+    });
 }

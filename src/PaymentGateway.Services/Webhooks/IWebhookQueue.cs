@@ -1,10 +1,8 @@
-using System.Threading.Channels;
-
 namespace PaymentGateway.Services.Webhooks;
 
 /// <summary>
-/// Fila em memória que desacopla o processamento do pagamento da entrega
-/// do webhook: a API responde rápido e a notificação sai em background.
+/// Sinal para acordar o dispatcher após um commit. Os eventos pendentes ficam
+/// no banco; perder este sinal não perde uma entrega.
 /// </summary>
 public interface IWebhookQueue
 {
@@ -12,13 +10,26 @@ public interface IWebhookQueue
     ValueTask<Guid> DequeueAsync(CancellationToken cancellationToken);
 }
 
-public class WebhookQueue : IWebhookQueue
+public sealed class WebhookQueue : IWebhookQueue, IDisposable
 {
-    private readonly Channel<Guid> _channel = Channel.CreateUnbounded<Guid>();
+    private readonly SemaphoreSlim _signal = new(0, 1);
 
-    public void Enqueue(Guid paymentEventId) =>
-        _channel.Writer.TryWrite(paymentEventId);
+    public void Enqueue(Guid paymentEventId)
+    {
+        // O ID já está persistido. Um único sinal pendente basta, pois o
+        // dispatcher sempre consulta todos os eventos vencidos no banco.
+        if (_signal.CurrentCount == 0)
+        {
+            try { _signal.Release(); }
+            catch (SemaphoreFullException) { /* outro produtor sinalizou */ }
+        }
+    }
 
-    public ValueTask<Guid> DequeueAsync(CancellationToken cancellationToken) =>
-        _channel.Reader.ReadAsync(cancellationToken);
+    public async ValueTask<Guid> DequeueAsync(CancellationToken cancellationToken)
+    {
+        await _signal.WaitAsync(cancellationToken);
+        return Guid.Empty;
+    }
+
+    public void Dispose() => _signal.Dispose();
 }

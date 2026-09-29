@@ -1,4 +1,5 @@
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Hosting;
 using PaymentGateway.Data;
 using PaymentGateway.Domain.Entities;
 using PaymentGateway.Domain.Enums;
@@ -19,26 +20,41 @@ public interface IMerchantService
 public class MerchantService : IMerchantService
 {
     private readonly AppDbContext _db;
+    private readonly IHostEnvironment? _environment;
 
-    public MerchantService(AppDbContext db)
+    public MerchantService(AppDbContext db, IHostEnvironment? environment = null)
     {
         _db = db;
+        _environment = environment;
     }
 
     public async Task<MerchantCreatedResponse> RegisterAsync(CreateMerchantRequest request, CancellationToken ct = default)
     {
+        string? webhookUrl = null;
+        if (request.WebhookUrl is not null)
+        {
+            var allowLoopback = _environment is not null &&
+                (_environment.IsDevelopment() || _environment.IsEnvironment("Testing"));
+
+            if (request.WebhookUrl.Length > 500 ||
+                !WebhookTargetValidator.TryValidate(request.WebhookUrl, allowLoopback, out var validatedUrl))
+                throw new DomainException("A URL do webhook deve ser HTTPS público na porta 443. URLs locais são permitidas apenas em Development/Testing.");
+
+            webhookUrl = validatedUrl!.AbsoluteUri;
+        }
+
         var emailInUse = await _db.Merchants.AnyAsync(m => m.Email == request.Email, ct);
         if (emailInUse)
             throw new DomainException("Já existe um lojista cadastrado com este e-mail.");
 
         var apiKey = ApiKeyHasher.GenerateApiKey();
-        var webhookSecret = request.WebhookUrl is null ? null : WebhookSigner.GenerateSecret();
+        var webhookSecret = webhookUrl is null ? null : WebhookSigner.GenerateSecret();
 
         var merchant = new Merchant
         {
             Name = request.Name,
             Email = request.Email,
-            WebhookUrl = request.WebhookUrl,
+            WebhookUrl = webhookUrl,
             WebhookSecret = webhookSecret,
             ApiKeyHash = ApiKeyHasher.Hash(apiKey)
         };

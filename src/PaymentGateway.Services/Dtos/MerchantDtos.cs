@@ -11,6 +11,7 @@ public class CreateMerchantRequest
     [Required, EmailAddress, StringLength(200)]
     public string Email { get; set; } = string.Empty;
 
+    /// <summary>Destino HTTPS público na porta 443. No demo local, localhost HTTP(S) também é aceito.</summary>
     [Url, StringLength(500)]
     public string? WebhookUrl { get; set; }
 }
