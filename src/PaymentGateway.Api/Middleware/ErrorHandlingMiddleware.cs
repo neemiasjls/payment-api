@@ -1,5 +1,6 @@
 using Microsoft.AspNetCore.Mvc;
 using PaymentGateway.Domain.Exceptions;
+using Stripe;
 
 namespace PaymentGateway.Api.Middleware;
 
@@ -31,6 +32,19 @@ public class ErrorHandlingMiddleware
         catch (DomainException ex)
         {
             await WriteProblemAsync(context, StatusCodes.Status422UnprocessableEntity, "Regra de negócio violada", ex.Message);
+        }
+        catch (StripeException ex) when (ex.StripeError?.Type == "card_error")
+        {
+            _logger.LogWarning(ex, "Operação recusada pela Stripe em {Path}", context.Request.Path);
+            await WriteProblemAsync(context, StatusCodes.Status422UnprocessableEntity,
+                "Operação recusada pelo provedor",
+                ex.StripeError.DeclineCode ?? ex.StripeError.Code ?? "card_declined");
+        }
+        catch (StripeException ex)
+        {
+            _logger.LogError(ex, "Falha da Stripe em {Path}", context.Request.Path);
+            await WriteProblemAsync(context, StatusCodes.Status502BadGateway,
+                "Falha no provedor", "Não foi possível confirmar a operação. Consulte o pagamento antes de tentar novamente.");
         }
         catch (Exception ex)
         {

@@ -1,7 +1,6 @@
 using System.Net;
 using System.Net.Sockets;
 using System.Text;
-using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.FileProviders;
@@ -100,8 +99,53 @@ public sealed class WebhookDispatcherTests
         Assert.Equal(0, await restarted.DispatchDueAsync());
     }
 
+    [Fact]
+    public async Task RedirectResponse_IsRecordedWithoutFollowingLocation()
+    {
+        using var listener = new TcpListener(IPAddress.Loopback, 0);
+        listener.Start();
+        var port = ((IPEndPoint)listener.LocalEndpoint).Port;
+        using var fixture = new DispatcherFixture();
+        var eventId = await fixture.InsertEventAsync(
+            $"http://127.0.0.1:{port}/hook", "whsec_test_secret");
+
+        var requestTask = RespondOnceAsync(listener, 302,
+            "http://169.254.169.254/latest/meta-data/");
+        Assert.Equal(1, await fixture.Dispatcher.DispatchDueAsync());
+        await requestTask;
+
+        using var db = fixture.CreateDbContext();
+        var paymentEvent = await db.PaymentEvents.AsNoTracking().SingleAsync(e => e.Id == eventId);
+        Assert.Equal("HTTP 302", paymentEvent.LastDeliveryError);
+        Assert.Equal(1, paymentEvent.DeliveryAttempts);
+    }
+
+    [Fact]
+    public async Task ConcurrentDispatchers_ClaimAnEventOnlyOnce()
+    {
+        using var listener = new TcpListener(IPAddress.Loopback, 0);
+        listener.Start();
+        var port = ((IPEndPoint)listener.LocalEndpoint).Port;
+        using var fixture = new DispatcherFixture();
+        var eventId = await fixture.InsertEventAsync(
+            $"http://127.0.0.1:{port}/hook", "whsec_test_secret");
+        using var secondDispatcher = fixture.CreateNewDispatcher();
+
+        var requestTask = RespondOnceAsync(listener, 200);
+        var results = await Task.WhenAll(
+            fixture.Dispatcher.DispatchDueAsync(),
+            secondDispatcher.DispatchDueAsync());
+        await requestTask;
+
+        Assert.Equal(1, results.Sum());
+        using var db = fixture.CreateDbContext();
+        var paymentEvent = await db.PaymentEvents.AsNoTracking().SingleAsync(e => e.Id == eventId);
+        Assert.Equal(1, paymentEvent.DeliveryAttempts);
+        Assert.NotNull(paymentEvent.DeliveredAtUtc);
+    }
+
     private static async Task<(string Body, string Signature)> RespondOnceAsync(
-        TcpListener listener, int statusCode)
+        TcpListener listener, int statusCode, string? location = null)
     {
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
         using var client = await listener.AcceptTcpClientAsync(timeout.Token);
@@ -128,8 +172,9 @@ public sealed class WebhookDispatcherTests
             read += count;
         }
 
+        var locationHeader = location is null ? "" : $"Location: {location}\r\n";
         var response = Encoding.ASCII.GetBytes(
-            $"HTTP/1.1 {statusCode} {(statusCode == 200 ? "OK" : "Unavailable")}\r\nContent-Length: 0\r\nConnection: close\r\n\r\n");
+            $"HTTP/1.1 {statusCode} {(statusCode == 200 ? "OK" : "Unavailable")}\r\n{locationHeader}Content-Length: 0\r\nConnection: close\r\n\r\n");
         await stream.WriteAsync(response, timeout.Token);
         return (new string(body), Assert.IsType<string>(signature));
     }
@@ -150,7 +195,7 @@ public sealed class WebhookDispatcherTests
             services.AddSingleton<IWebhookQueue, WebhookQueue>();
             services.AddSingleton<WebhookDispatcher>();
             services.AddDbContext<AppDbContext>(options =>
-                options.UseSqlite($"Data Source={_databasePath}"));
+                options.UseSqlite($"Data Source={_databasePath};Pooling=False"));
             _services = services.BuildServiceProvider();
 
             using var db = CreateDbContext();
@@ -159,7 +204,7 @@ public sealed class WebhookDispatcherTests
 
         public AppDbContext CreateDbContext() => new(
             new DbContextOptionsBuilder<AppDbContext>()
-                .UseSqlite($"Data Source={_databasePath}")
+                .UseSqlite($"Data Source={_databasePath};Pooling=False")
                 .Options);
 
         public WebhookDispatcher CreateNewDispatcher() => new(
@@ -195,7 +240,6 @@ public sealed class WebhookDispatcherTests
         public void Dispose()
         {
             _services.Dispose();
-            SqliteConnection.ClearAllPools();
             File.Delete(_databasePath);
         }
     }

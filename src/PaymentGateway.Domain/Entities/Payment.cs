@@ -27,6 +27,7 @@ public class Payment
     public string Provider { get; private set; } = string.Empty;
     public string? ProviderPaymentId { get; private set; }
     public string? PendingOperation { get; private set; }
+    public string? LastOperationError { get; private set; }
 
     // Token de concorrência que funciona também no SQLite.
     public int Version { get; private set; }
@@ -48,8 +49,8 @@ public class Payment
     public static Payment CreatePending(
         Guid merchantId, long amountInCents, string currency, string? description, string provider)
     {
-        if (amountInCents <= 0)
-            throw new DomainException("O valor do pagamento deve ser maior que zero.");
+        if (amountInCents is < 50 or > 99_999_999)
+            throw new DomainException("O valor deve estar entre 50 e 99.999.999 centavos.");
         if (currency != "BRL")
             throw new DomainException("A demonstração aceita apenas BRL.");
 
@@ -87,6 +88,16 @@ public class Payment
         if (PendingOperation is not null && PendingOperation != operation)
             throw new DomainException($"A operação {PendingOperation} ainda está pendente.");
         PendingOperation = operation;
+        LastOperationError = null;
+        Version++;
+    }
+
+    public void ClearPendingOperation(string? error)
+    {
+        if (PendingOperation is null)
+            return;
+        PendingOperation = null;
+        LastOperationError = error;
         Version++;
     }
 
@@ -145,6 +156,7 @@ public class Payment
 
         Status = PaymentStatus.Captured;
         PendingOperation = null;
+        LastOperationError = null;
         CapturedAtUtc = DateTime.UtcNow;
         Version++;
     }
@@ -158,6 +170,7 @@ public class Payment
 
         Status = PaymentStatus.Voided;
         PendingOperation = null;
+        LastOperationError = null;
         VoidedAtUtc = DateTime.UtcNow;
         Version++;
     }
@@ -171,6 +184,7 @@ public class Payment
 
         Status = PaymentStatus.Refunded;
         PendingOperation = null;
+        LastOperationError = null;
         RefundedAtUtc = DateTime.UtcNow;
         Version++;
     }

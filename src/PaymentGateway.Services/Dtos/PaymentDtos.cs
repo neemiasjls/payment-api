@@ -6,7 +6,7 @@ namespace PaymentGateway.Services.Dtos;
 public class CreatePaymentRequest
 {
     /// <summary>Valor em centavos: R$ 10,00 = 1000.</summary>
-    [Range(1, long.MaxValue, ErrorMessage = "O valor deve ser maior que zero.")]
+    [Range(50, 99_999_999, ErrorMessage = "O valor deve estar entre 50 e 99.999.999 centavos.")]
     public long AmountInCents { get; set; }
 
     [StringLength(3, MinimumLength = 3)]
@@ -36,6 +36,7 @@ public record PaymentResponse(
     string Provider,
     string? ProviderPaymentId,
     string? PendingOperation,
+    string? LastOperationError,
     string? ClientSecret)
 {
     public static PaymentResponse FromEntity(Payment payment, string? clientSecret = null) => new(
@@ -54,6 +55,7 @@ public record PaymentResponse(
         payment.Provider,
         payment.ProviderPaymentId,
         payment.PendingOperation,
+        payment.LastOperationError,
         clientSecret);
 }
 

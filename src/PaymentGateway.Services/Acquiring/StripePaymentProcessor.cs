@@ -32,7 +32,8 @@ public sealed class StripePaymentProcessor : IPaymentProcessor
         ProviderAuthorizeRequest request, CancellationToken cancellationToken = default)
     {
         ValidateOperationKey(request.OperationKey);
-        if (request.PaymentId == Guid.Empty || request.AmountInCents <= 0 ||
+        if (request.PaymentId == Guid.Empty ||
+            request.AmountInCents is < 50 or > 99_999_999 ||
             string.IsNullOrWhiteSpace(request.Currency))
             throw new DomainException("Parâmetros de autorização inválidos.");
 
@@ -68,10 +69,17 @@ public sealed class StripePaymentProcessor : IPaymentProcessor
         {
             var intent = ex.StripeError!.PaymentIntent!;
             EnsureTestIntent(intent);
-            return MapIntent(intent, fallbackCard) with
+            var declined = MapIntent(intent, fallbackCard);
+            if (declined.GatewayPaymentId is not null &&
+                declined.GatewayPaymentId != request.PaymentId ||
+                declined.AmountInCents != request.AmountInCents ||
+                !string.Equals(declined.Currency, request.Currency, StringComparison.OrdinalIgnoreCase))
+                throw new DomainException("A resposta de recusa da Stripe não corresponde ao pagamento solicitado.");
+            return declined with
             {
                 Status = ProviderPaymentStatus.Declined,
-                DeclineReason = ex.StripeError.DeclineCode ?? ex.StripeError.Code ?? "card_declined"
+                DeclineReason = ex.StripeError.DeclineCode ?? ex.StripeError.Code ?? "card_declined",
+                GatewayPaymentId = request.PaymentId
             };
         }
     }
@@ -114,6 +122,16 @@ public sealed class StripePaymentProcessor : IPaymentProcessor
             "failed" or "canceled" => ProviderPaymentStatus.Captured,
             _ => ProviderPaymentStatus.Pending
         };
+        if (status == ProviderPaymentStatus.Refunded)
+        {
+            // A resposta do Refund diz respeito a este estorno, não ao total
+            // estornado do pagamento. Confirme o total antes de inverter o ledger.
+            var current = await GetAsync(providerPaymentId, cancellationToken);
+            return current.Status == ProviderPaymentStatus.Captured
+                ? current with { Status = ProviderPaymentStatus.Pending, DeclineReason = null }
+                : current;
+        }
+
         return new ProviderPaymentResult(
             providerPaymentId, status, null, null, refund.FailureReason, null);
     }
@@ -132,17 +150,53 @@ public sealed class StripePaymentProcessor : IPaymentProcessor
 
         // Stripe leaves the PaymentIntent at succeeded after a refund. Inspect refunds
         // before reporting a captured payment during reconciliation.
-        var refunds = await _refunds.ListAsync(
-            new RefundListOptions { PaymentIntent = providerPaymentId, Limit = 100 },
-            null, cancellationToken);
-        var fullRefund = refunds.Data.FirstOrDefault(r => r.Amount >= intent.AmountReceived);
-        return fullRefund?.Status switch
+        long succeeded = 0;
+        long pending = 0;
+        long requiresAction = 0;
+        string? fullRefundFailure = null;
+        string? cursor = null;
+        while (true)
         {
-            "succeeded" => result with { Status = ProviderPaymentStatus.Refunded },
-            "requires_action" => result with { Status = ProviderPaymentStatus.RequiresAction },
-            "pending" => result with { Status = ProviderPaymentStatus.Pending },
-            _ => result
-        };
+            var refunds = await _refunds.ListAsync(
+                new RefundListOptions
+                {
+                    PaymentIntent = providerPaymentId,
+                    Limit = 100,
+                    StartingAfter = cursor
+                }, null, cancellationToken);
+
+            foreach (var refund in refunds.Data)
+            {
+                switch (refund.Status)
+                {
+                    case "succeeded":
+                        succeeded = checked(succeeded + refund.Amount);
+                        break;
+                    case "pending":
+                        pending = checked(pending + refund.Amount);
+                        break;
+                    case "requires_action":
+                        requiresAction = checked(requiresAction + refund.Amount);
+                        break;
+                    case "failed" or "canceled" when refund.Amount >= intent.AmountReceived:
+                        fullRefundFailure ??= refund.FailureReason ?? refund.Status;
+                        break;
+                }
+            }
+
+            if (!refunds.HasMore)
+                break;
+            cursor = refunds.Data.LastOrDefault()?.Id
+                ?? throw new InvalidOperationException("A Stripe retornou paginação de estornos sem cursor.");
+        }
+
+        if (succeeded >= intent.AmountReceived)
+            return result with { Status = ProviderPaymentStatus.Refunded };
+        if (succeeded + requiresAction >= intent.AmountReceived)
+            return result with { Status = ProviderPaymentStatus.RequiresAction };
+        if (succeeded + pending >= intent.AmountReceived)
+            return result with { Status = ProviderPaymentStatus.Pending };
+        return result with { DeclineReason = fullRefundFailure };
     }
 
     private static ProviderPaymentResult MapIntent(
@@ -160,13 +214,20 @@ public sealed class StripePaymentProcessor : IPaymentProcessor
             "requires_action" => ProviderPaymentStatus.RequiresAction,
             _ => ProviderPaymentStatus.Pending
         };
+        Guid? gatewayPaymentId = intent.Metadata is not null &&
+            intent.Metadata.TryGetValue("gateway_payment_id", out var localId) &&
+            Guid.TryParse(localId, out var parsedId)
+                ? parsedId : null;
         return new ProviderPaymentResult(
             intent.Id,
             status,
             card?.Last4 ?? chargedCard?.Last4 ?? fallbackCard?.Last4,
             card?.Brand ?? chargedCard?.Brand ?? fallbackCard?.Brand,
             intent.LastPaymentError?.DeclineCode ?? intent.LastPaymentError?.Code,
-            status == ProviderPaymentStatus.RequiresAction ? intent.ClientSecret : null);
+            status == ProviderPaymentStatus.RequiresAction ? intent.ClientSecret : null,
+            gatewayPaymentId,
+            status == ProviderPaymentStatus.Captured ? intent.AmountReceived : intent.Amount,
+            intent.Currency);
     }
 
     private static bool IsCardDecline(StripeException exception) =>

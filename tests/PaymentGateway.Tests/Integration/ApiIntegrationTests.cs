@@ -14,20 +14,24 @@ public class ApiIntegrationTests : IClassFixture<ApiFactory>
         _client = factory.CreateClient();
     }
 
-    private static object NewPaymentBody(long amountInCents = 10_000, string cardNumber = "4242424242424242") => new
+    private static object NewPaymentBody(long amountInCents = 10_000, string paymentMethodId = "pm_card_visa") => new
     {
         amountInCents,
         currency = "BRL",
         description = "Pedido de integração",
-        card = new
-        {
-            number = cardNumber,
-            holderName = "CLIENTE TESTE",
-            expMonth = 12,
-            expYear = DateTime.UtcNow.Year + 3,
-            cvv = "123"
-        }
+        paymentMethodId
     };
+
+    private static async Task<HttpResponseMessage> PostWithKeyAsync(
+        HttpClient client, string path, object? body = null)
+    {
+        using var request = new HttpRequestMessage(HttpMethod.Post, path)
+        {
+            Content = body is null ? null : JsonContent.Create(body)
+        };
+        request.Headers.Add("Idempotency-Key", Guid.NewGuid().ToString("N"));
+        return await client.SendAsync(request);
+    }
 
     /// <summary>Cadastra um lojista novo e devolve um client já autenticado.</summary>
     private async Task<HttpClient> RegisterAndAuthenticateAsync()
@@ -93,7 +97,7 @@ public class ApiIntegrationTests : IClassFixture<ApiFactory>
         var client = await RegisterAndAuthenticateAsync();
 
         // Autoriza R$ 100,00
-        var createResponse = await client.PostAsJsonAsync("/api/v1/payments", NewPaymentBody(10_000));
+        var createResponse = await PostWithKeyAsync(client, "/api/v1/payments", NewPaymentBody(10_000));
         Assert.Equal(HttpStatusCode.Created, createResponse.StatusCode);
 
         var payment = await createResponse.Content.ReadFromJsonAsync<PaymentResponse>();
@@ -101,7 +105,7 @@ public class ApiIntegrationTests : IClassFixture<ApiFactory>
         Assert.Equal("Authorized", payment.Status);
 
         // Captura
-        var captureResponse = await client.PostAsync($"/api/v1/payments/{payment.Id}/capture", null);
+        var captureResponse = await PostWithKeyAsync(client, $"/api/v1/payments/{payment.Id}/capture");
         Assert.Equal(HttpStatusCode.OK, captureResponse.StatusCode);
 
         // Saldo = 10000 - 2,5% de taxa = 9750
@@ -110,7 +114,7 @@ public class ApiIntegrationTests : IClassFixture<ApiFactory>
         Assert.Equal(9_750, balance.AvailableInCents);
 
         // Estorna e o saldo volta a zero
-        var refundResponse = await client.PostAsync($"/api/v1/payments/{payment.Id}/refund", null);
+        var refundResponse = await PostWithKeyAsync(client, $"/api/v1/payments/{payment.Id}/refund");
         Assert.Equal(HttpStatusCode.OK, refundResponse.StatusCode);
 
         balance = await client.GetFromJsonAsync<BalanceResponse>("/api/v1/merchants/me/balance");
@@ -152,22 +156,22 @@ public class ApiIntegrationTests : IClassFixture<ApiFactory>
     {
         var client = await RegisterAndAuthenticateAsync();
 
-        var response = await client.PostAsJsonAsync(
-            "/api/v1/payments", NewPaymentBody(cardNumber: "4000000000000002"));
+        var response = await PostWithKeyAsync(
+            client, "/api/v1/payments", NewPaymentBody(paymentMethodId: "pm_card_visa_chargeDeclined"));
 
         var payment = await response.Content.ReadFromJsonAsync<PaymentResponse>();
         Assert.NotNull(payment);
         Assert.Equal("Declined", payment.Status);
-        Assert.Equal("card_declined", payment.DeclineReason);
+        Assert.Equal("generic_decline", payment.DeclineReason);
     }
 
     [Fact]
-    public async Task Authorize_LuhnInvalido_Retorna422()
+    public async Task Authorize_PaymentMethodInvalido_Retorna422()
     {
         var client = await RegisterAndAuthenticateAsync();
 
-        var response = await client.PostAsJsonAsync(
-            "/api/v1/payments", NewPaymentBody(cardNumber: "4242424242424241"));
+        var response = await PostWithKeyAsync(
+            client, "/api/v1/payments", NewPaymentBody(paymentMethodId: "pm_invalido"));
 
         Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
     }
@@ -177,7 +181,7 @@ public class ApiIntegrationTests : IClassFixture<ApiFactory>
     {
         var client = await RegisterAndAuthenticateAsync();
 
-        var response = await client.PostAsync($"/api/v1/payments/{Guid.NewGuid()}/capture", null);
+        var response = await PostWithKeyAsync(client, $"/api/v1/payments/{Guid.NewGuid()}/capture");
 
         Assert.Equal(HttpStatusCode.NotFound, response.StatusCode);
     }

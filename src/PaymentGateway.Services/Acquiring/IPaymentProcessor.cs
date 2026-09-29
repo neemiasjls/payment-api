@@ -27,7 +27,10 @@ public sealed record ProviderPaymentResult(
     string? CardLast4,
     string? CardBrand,
     string? DeclineReason,
-    string? ClientSecret);
+    string? ClientSecret,
+    Guid? GatewayPaymentId = null,
+    long? AmountInCents = null,
+    string? Currency = null);
 
 public interface IPaymentProcessor
 {

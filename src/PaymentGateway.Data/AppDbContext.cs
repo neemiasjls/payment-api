@@ -35,6 +35,7 @@ public class AppDbContext : DbContext
             payment.Property(p => p.Provider).HasMaxLength(30).IsRequired();
             payment.Property(p => p.ProviderPaymentId).HasMaxLength(200);
             payment.Property(p => p.PendingOperation).HasMaxLength(30);
+            payment.Property(p => p.LastOperationError).HasMaxLength(200);
             payment.Property(p => p.Version).IsConcurrencyToken();
             payment.Property(p => p.Description).HasMaxLength(500);
             payment.Property(p => p.DeclineReason).HasMaxLength(100);

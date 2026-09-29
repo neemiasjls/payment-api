@@ -3,6 +3,7 @@ using PaymentGateway.Domain.Entities;
 using PaymentGateway.Domain.Enums;
 using PaymentGateway.Domain.Exceptions;
 using PaymentGateway.Services;
+using PaymentGateway.Services.Acquiring;
 using PaymentGateway.Services.Dtos;
 using PaymentGateway.Services.Security;
 using PaymentGateway.Services.Webhooks;
@@ -19,7 +20,7 @@ public class PaymentServiceTests : IDisposable
     public PaymentServiceTests()
     {
         var options = Options.Create(new GatewayOptions { FeeBps = 250 }); // 2,5%
-        _service = new PaymentService(_db.Context, new WebhookQueue(), options);
+        _service = new PaymentService(_db.Context, new WebhookQueue(), options, new FakePaymentProcessor());
         _merchants = new MerchantService(_db.Context);
 
         var merchant = new Merchant
@@ -36,19 +37,12 @@ public class PaymentServiceTests : IDisposable
     public void Dispose() => _db.Dispose();
 
     private static CreatePaymentRequest NewRequest(
-        long amountInCents = 10_000, string cardNumber = "4242424242424242") => new()
+        long amountInCents = 10_000, string paymentMethodId = "pm_card_visa") => new()
     {
         AmountInCents = amountInCents,
         Currency = "BRL",
         Description = "Pedido de teste",
-        Card = new CardRequest
-        {
-            Number = cardNumber,
-            HolderName = "CLIENTE TESTE",
-            ExpMonth = 12,
-            ExpYear = DateTime.UtcNow.Year + 3,
-            Cvv = "123"
-        }
+        PaymentMethodId = paymentMethodId
     };
 
     // ---------- Autorização ----------
@@ -61,13 +55,13 @@ public class PaymentServiceTests : IDisposable
         Assert.True(created);
         Assert.Equal("Authorized", payment.Status);
         Assert.Equal("4242", payment.CardLast4);
-        Assert.Equal("Visa", payment.CardBrand);
+        Assert.Equal("visa", payment.CardBrand);
     }
 
     [Fact]
-    public async Task Authorize_ComLuhnInvalido_LancaDomainException()
+    public async Task Authorize_ComPaymentMethodInvalido_LancaDomainException()
     {
-        var request = NewRequest(cardNumber: "4242424242424241");
+        var request = NewRequest(paymentMethodId: "pm_invalido");
 
         await Assert.ThrowsAsync<DomainException>(
             () => _service.AuthorizeAsync(_merchantId, request, null));
@@ -77,17 +71,16 @@ public class PaymentServiceTests : IDisposable
     public async Task Authorize_ComCartaoDeTesteRecusado_CriaPagamentoDeclined()
     {
         var (payment, _) = await _service.AuthorizeAsync(
-            _merchantId, NewRequest(cardNumber: "4000000000000002"), null);
+            _merchantId, NewRequest(paymentMethodId: "pm_card_visa_chargeDeclined"), null);
 
         Assert.Equal("Declined", payment.Status);
-        Assert.Equal("card_declined", payment.DeclineReason);
+        Assert.Equal("generic_decline", payment.DeclineReason);
     }
 
     [Fact]
     public async Task Authorize_ComCartaoVencido_RecusaComExpiredCard()
     {
-        var request = NewRequest();
-        request.Card.ExpYear = DateTime.UtcNow.Year - 1;
+        var request = NewRequest(paymentMethodId: "pm_card_chargeDeclinedExpiredCard");
 
         var (payment, _) = await _service.AuthorizeAsync(_merchantId, request, null);
 
@@ -133,20 +126,21 @@ public class PaymentServiceTests : IDisposable
     public async Task Capture_PagamentoRecusado_LancaDomainException()
     {
         var (payment, _) = await _service.AuthorizeAsync(
-            _merchantId, NewRequest(cardNumber: "4000000000000002"), null);
+            _merchantId, NewRequest(paymentMethodId: "pm_card_visa_chargeDeclined"), null);
 
         await Assert.ThrowsAsync<DomainException>(
             () => _service.CaptureAsync(_merchantId, payment.Id));
     }
 
     [Fact]
-    public async Task Capture_DuasVezes_LancaDomainException()
+    public async Task Capture_DuasVezes_NaoDuplicaLedger()
     {
         var (payment, _) = await _service.AuthorizeAsync(_merchantId, NewRequest(), null);
         await _service.CaptureAsync(_merchantId, payment.Id);
 
-        await Assert.ThrowsAsync<DomainException>(
-            () => _service.CaptureAsync(_merchantId, payment.Id));
+        var second = await _service.CaptureAsync(_merchantId, payment.Id);
+        Assert.Equal("Captured", second.Status);
+        Assert.Equal(3, _db.Context.LedgerEntries.Count());
     }
 
     // ---------- Estorno ----------
@@ -211,7 +205,8 @@ public class PaymentServiceTests : IDisposable
         var events = await _service.GetEventsAsync(_merchantId, payment.Id);
 
         Assert.Equal(
-            ["payment.authorized", "payment.captured", "payment.refunded"],
+            ["payment.authorized", "payment.capture_pending", "payment.captured",
+                "payment.refund_pending", "payment.refunded"],
             events.Select(e => e.Type).ToArray());
     }
 }

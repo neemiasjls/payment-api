@@ -14,7 +14,8 @@ public sealed class FakePaymentProcessor : IPaymentProcessor
         ProviderAuthorizeRequest request, CancellationToken cancellationToken = default)
     {
         cancellationToken.ThrowIfCancellationRequested();
-        if (request.PaymentId == Guid.Empty || request.AmountInCents <= 0 ||
+        if (request.PaymentId == Guid.Empty ||
+            request.AmountInCents is < 50 or > 99_999_999 ||
             string.IsNullOrWhiteSpace(request.Currency) || string.IsNullOrWhiteSpace(request.OperationKey))
             throw new DomainException("Parâmetros de autorização inválidos.");
 
@@ -33,14 +34,17 @@ public sealed class FakePaymentProcessor : IPaymentProcessor
                 card.Last4,
                 card.Brand,
                 AcquirerSimulator.Authorize(request.PaymentMethodId),
-                initialStatus == ProviderPaymentStatus.RequiresAction ? $"fake_secret_{request.PaymentId:N}" : null)));
+                initialStatus == ProviderPaymentStatus.RequiresAction ? $"fake_secret_{request.PaymentId:N}" : null,
+                request.PaymentId,
+                request.AmountInCents,
+                request.Currency)));
 
         lock (payment.Gate)
         {
             if (payment.Request != request)
                 throw new DomainException("Conflito de idempotência na autorização simulada.");
 
-            return Task.FromResult(payment.Result);
+            return Task.FromResult(payment.AuthorizationResult);
         }
     }
 
@@ -81,16 +85,16 @@ public sealed class FakePaymentProcessor : IPaymentProcessor
         {
             if (payment.CompletedOperations.TryGetValue(operationKey, out var prior))
             {
-                if (prior != target)
+                if (prior.Status != target)
                     throw new DomainException("Chave de idempotência reutilizada para outra operação.");
-                return Task.FromResult(payment.Result);
+                return Task.FromResult(prior);
             }
 
             if (payment.Result.Status != expected)
                 throw new DomainException($"Operação inválida para pagamento {payment.Result.Status}.");
 
             payment.Result = payment.Result with { Status = target, ClientSecret = null };
-            payment.CompletedOperations.Add(operationKey, target);
+            payment.CompletedOperations.Add(operationKey, payment.Result);
             return Task.FromResult(payment.Result);
         }
     }
@@ -104,7 +108,8 @@ public sealed class FakePaymentProcessor : IPaymentProcessor
     {
         public object Gate { get; } = new();
         public ProviderAuthorizeRequest Request { get; } = request;
+        public ProviderPaymentResult AuthorizationResult { get; } = result;
         public ProviderPaymentResult Result { get; set; } = result;
-        public Dictionary<string, ProviderPaymentStatus> CompletedOperations { get; } = new(StringComparer.Ordinal);
+        public Dictionary<string, ProviderPaymentResult> CompletedOperations { get; } = new(StringComparer.Ordinal);
     }
 }

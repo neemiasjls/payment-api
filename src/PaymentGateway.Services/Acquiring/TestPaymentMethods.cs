@@ -15,7 +15,7 @@ public static class TestPaymentMethods
         "pm_card_visa_chargeDeclined" => ("0002", "visa"),
         "pm_card_visa_chargeDeclinedInsufficientFunds" => ("9995", "visa"),
         "pm_card_chargeDeclinedExpiredCard" => ("0069", "visa"),
-        "pm_card_authenticationRequired" => ("3155", "visa"),
+        "pm_card_authenticationRequired" => (string.Empty, "Unknown"),
         _ => throw new DomainException(
             "Use apenas um PaymentMethod de teste documentado pela Stripe.")
     };

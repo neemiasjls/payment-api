@@ -6,6 +6,8 @@ using PaymentGateway.Api.Middleware;
 using PaymentGateway.Api.Setup;
 using PaymentGateway.Data;
 using PaymentGateway.Services;
+using PaymentGateway.Services.Acquiring;
+using PaymentGateway.Services.Reconciliation;
 using PaymentGateway.Services.Webhooks;
 using Serilog;
 
@@ -13,7 +15,7 @@ using Serilog;
 // (ex.: erro de configuração), que de outra forma se perderiam.
 Log.Logger = new LoggerConfiguration()
     .WriteTo.Console()
-    .CreateBootstrapLogger();
+    .CreateLogger();
 
 try
 {
@@ -37,23 +39,47 @@ try
 
     builder.Services.Configure<GatewayOptions>(
         builder.Configuration.GetSection(GatewayOptions.SectionName));
+    builder.Services.Configure<StripeProcessorOptions>(
+        builder.Configuration.GetSection(StripeProcessorOptions.SectionName));
+    builder.Services.Configure<PaymentReconciliationOptions>(
+        builder.Configuration.GetSection(PaymentReconciliationOptions.SectionName));
+
+    var processorName = builder.Configuration["Gateway:Processor"] ?? "fake";
+    switch (processorName.ToLowerInvariant())
+    {
+        case "fake":
+            builder.Services.AddSingleton<IPaymentProcessor, FakePaymentProcessor>();
+            break;
+        case "stripe":
+            var stripeKey = builder.Configuration["Stripe:SecretKey"];
+            var webhookSecret = builder.Configuration["Stripe:WebhookSecret"];
+            if (stripeKey is null || !stripeKey.StartsWith("sk_test_", StringComparison.Ordinal) ||
+                stripeKey.Length <= "sk_test_".Length ||
+                webhookSecret is null || !webhookSecret.StartsWith("whsec_", StringComparison.Ordinal) ||
+                webhookSecret.Length <= "whsec_".Length)
+                throw new InvalidOperationException(
+                    "Stripe Test Mode requer Stripe:SecretKey (sk_test_) e Stripe:WebhookSecret (whsec_).");
+            builder.Services.AddSingleton<IPaymentProcessor, StripePaymentProcessor>();
+            builder.Services.AddHostedService<PaymentReconciliationWorker>();
+            break;
+        default:
+            throw new InvalidOperationException("Gateway:Processor deve ser fake ou stripe.");
+    }
 
     builder.Services.AddScoped<IMerchantService, MerchantService>();
     builder.Services.AddScoped<IPaymentService, PaymentService>();
 
-    // Infra de webhooks: fila singleton + serviço em background que a consome.
+    // O banco é a fonte durável dos eventos; a fila acorda o dispatcher.
     builder.Services.AddSingleton<IWebhookQueue, WebhookQueue>();
     builder.Services.AddHostedService<WebhookDispatcher>();
-    builder.Services.AddHttpClient(WebhookDispatcher.HttpClientName,
-        client => client.Timeout = TimeSpan.FromSeconds(5));
 
     // Health check que de fato consulta o banco — é o que um load balancer
     // ou orquestrador usa para decidir se a instância recebe tráfego.
     builder.Services.AddHealthChecks()
         .AddDbContextCheck<AppDbContext>();
 
-    // Rate limiting particionado por API key (ou IP, para anônimos):
-    // um lojista abusivo não degrada o serviço dos demais.
+    // Rate limiting global por IP de origem. Um cliente não pode criar novos
+    // buckets enviando chaves de API arbitrárias antes da autenticação.
     var rateLimitPerMinute = builder.Configuration
         .GetSection(GatewayOptions.SectionName)
         .Get<GatewayOptions>()?.RateLimitPerMinute ?? 100;
@@ -64,9 +90,7 @@ try
 
         options.GlobalLimiter = PartitionedRateLimiter.Create<HttpContext, string>(context =>
             RateLimitPartition.GetFixedWindowLimiter(
-                context.Request.Headers[ApiKeyMiddleware.HeaderName].FirstOrDefault()
-                    ?? context.Connection.RemoteIpAddress?.ToString()
-                    ?? "anonymous",
+                context.Connection.RemoteIpAddress?.ToString() ?? "anonymous",
                 _ => new FixedWindowRateLimiterOptions
                 {
                     PermitLimit = rateLimitPerMinute,
@@ -93,8 +117,8 @@ try
         {
             Title = "Payment Gateway API",
             Version = "v1",
-            Description = "Gateway de pagamentos com autorização/captura/estorno, " +
-                          "ledger de partidas dobradas, idempotência e webhooks assinados."
+            Description = "Sandbox de pagamentos com provedor fake ou Stripe Test Mode. " +
+                          "Saldos e taxas são demonstrativos; não há repasses reais."
         });
 
         // Descrições dos comentários /// aparecem no Swagger UI.
@@ -118,17 +142,15 @@ try
 
     var app = builder.Build();
 
-    // Aplica as migrations pendentes na inicialização (estratégia adequada a
-    // uma instância única; com várias réplicas, o passo rodaria no deploy).
+    // Em implantação, migrations devem rodar como passo único antes da API.
     // Nos testes de integração o schema é criado pela própria suíte.
-    if (!app.Environment.IsEnvironment("Testing"))
+    if (app.Environment.IsDevelopment())
     {
         using var scope = app.Services.CreateScope();
         var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
         db.Database.Migrate();
 
-        if (app.Environment.IsDevelopment())
-            DbSeeder.Seed(db);
+        DbSeeder.Seed(db);
     }
 
     // HTTPS obrigatório fora do ambiente local: HSTS instrui o navegador a
@@ -141,16 +163,29 @@ try
     }
 
     app.UseMiddleware<SecurityHeadersMiddleware>();
+    app.Use((context, next) =>
+    {
+        context.Response.Headers["X-Gateway-Mode"] = "sandbox";
+        return next(context);
+    });
     app.UseSerilogRequestLogging();
     app.UseMiddleware<ErrorHandlingMiddleware>();
     app.UseRateLimiter();
 
-    app.UseSwagger();
-    app.UseSwaggerUI();
+    if (app.Environment.IsDevelopment() || app.Environment.IsEnvironment("Testing"))
+    {
+        app.UseSwagger();
+        app.UseSwaggerUI();
+    }
 
     app.UseMiddleware<ApiKeyMiddleware>();
 
-    app.MapGet("/", () => Results.Redirect("/swagger")).ExcludeFromDescription();
+    app.MapGet("/", () => Results.Ok(new
+    {
+        Mode = "sandbox",
+        Provider = processorName.ToLowerInvariant(),
+        Documentation = app.Environment.IsDevelopment() ? "/swagger" : null
+    })).ExcludeFromDescription();
     app.MapHealthChecks("/health");
 
     app.MapControllers();
@@ -162,6 +197,7 @@ try
 catch (Exception ex) when (ex is not HostAbortedException)
 {
     Log.Fatal(ex, "A aplicação falhou ao iniciar");
+    throw;
 }
 finally
 {
