@@ -3,6 +3,15 @@
 **/*.db
 **/*.db-shm
 **/*.db-wal
+# Segredos e ajustes locais nunca entram no contexto da imagem.
+.env
+.env.*
+**/.env
+**/.env.*
+**/secrets.json
+**/appsettings.*.local.json
+**/*.pfx
+**/*.pem
 .git/
 .github/
 .claude/

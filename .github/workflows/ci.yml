@@ -6,6 +6,9 @@ on:
   pull_request:
     branches: [main]
 
+permissions:
+  contents: read
+
 jobs:
   build-and-test:
     runs-on: ubuntu-latest
@@ -18,17 +21,19 @@ jobs:
         with:
           dotnet-version: 10.0.x
 
-      - name: Restaurar dependências
-        run: dotnet restore
-
-      - name: Verificar pacotes com vulnerabilidades conhecidas
-        # O comando só lista; o grep transforma "achou vulnerabilidade" em falha.
-        run: |
-          dotnet list package --vulnerable --include-transitive 2>&1 | tee vulnerable.txt
-          ! grep -q "has the following vulnerable packages" vulnerable.txt
+      - name: Restaurar e auditar dependências
+        # No CI, NU1902-NU1904 também falham o restore. Na máquina local,
+        # Directory.Build.props mantém esses avisos informativos.
+        run: dotnet restore -p:NuGetAudit=true -p:NuGetAuditLevel=moderate -p:WarningsNotAsErrors=
 
       - name: Compilar
         run: dotnet build --no-restore --configuration Release
 
       - name: Testar
         run: dotnet test --no-build --configuration Release --verbosity normal
+
+      - name: Validar Docker Compose
+        run: docker compose config --quiet
+
+      - name: Construir imagem de sandbox
+        run: docker build --tag payment-gateway-sandbox:ci .
