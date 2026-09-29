@@ -1,171 +1,143 @@
-# 💳 Payment Gateway API
+# Payment Gateway API — sandbox
 
-![.NET 10](https://img.shields.io/badge/.NET-10.0-512BD4?logo=dotnet)
-![Testes](https://img.shields.io/badge/testes-45%20passando-brightgreen)
-![Licença](https://img.shields.io/badge/licen%C3%A7a-MIT-blue)
-![Docker](https://img.shields.io/badge/docker-ready-2496ED?logo=docker&logoColor=white)
+API de pagamentos em C# e .NET 10 para portfólio. Ela oferece autorização, captura, cancelamento antes da captura e estorno completo depois da captura. O provedor pode ser um simulador local (`fake`) ou a **Stripe Test Mode** (`stripe`). Nenhum dos dois movimenta dinheiro real.
 
-API de gateway de pagamentos construída em **C# / .NET 10**, simulando o núcleo de um sistema de adquirência: autorização, captura, cancelamento e estorno de transações com cartão, contabilidade de partidas dobradas, idempotência e webhooks assinados com HMAC.
+> **Escopo:** os lojistas, saldos, taxas e lançamentos do ledger são demonstrativos. A integração usa uma única conta Stripe de testes e **não** faz onboarding, split de pagamento nem repasses para vários lojistas. Não use esta aplicação para pagamentos reais.
 
-> Projeto de portfólio com foco no domínio de **meios de pagamento** — o ciclo de vida completo de uma transação, do "passou o cartão" ao repasse (menos a taxa) para o lojista.
+## O que está implementado
 
-## Funcionalidades
+- `IPaymentProcessor` separa o domínio dos provedores `fake` e `stripe`.
+- A Stripe usa o SDK oficial, `PaymentIntent` com `capture_method=manual`, cancelamento do intent e `Refund` após a captura.
+- A API recebe apenas `paymentMethodId` de teste. Ela não recebe número de cartão nem CVV. O provedor e o ID do pagamento no provedor ficam persistidos.
+- Cada chamada que altera um pagamento exige `Idempotency-Key`. A mesma chave com outros dados ou outra operação é rejeitada. As chamadas à Stripe usam chaves estáveis por pagamento e operação.
+- Estados `Pending` e `RequiresAction` não são tratados como autorização concluída. Uma resposta de ação adicional pode incluir `clientSecret`; sem uma interface de autenticação, o roteiro abaixo apenas demonstra esse estado.
+- Versão de concorrência no pagamento e índices únicos protegem as transições e os lançamentos do ledger contra duplicação.
+- O endpoint de entrada da Stripe valida a assinatura do corpo original, rejeita eventos `livemode`, deduplica IDs de evento e consulta o estado atual do provedor para reconciliar o pagamento.
+- Com Stripe ativo, um worker também consulta na Stripe pagamentos `Pending`, `RequiresAction`, `Authorized` ou `Captured` com `providerPaymentId` ao iniciar e, por padrão, a cada cinco minutos em lotes de 50. Isso permite detectar mudanças mesmo se um webhook não chegar.
+- Eventos destinados ao webhook do lojista são gravados no SQLite junto com a mudança de estado. O worker varre pendências após reinício, reserva cada entrega e tenta novamente até cinco vezes. O consumidor deve deduplicar pelo header `X-Webhook-Event-Id`: entrega é **pelo menos uma vez**, não exatamente uma vez.
+- API key por lojista, limite global de 100 requisições por minuto por IP, health check, logs estruturados e OpenAPI em Development/Testing.
 
-**Domínio de pagamentos**
-- **Ciclo de vida da transação** — `Authorized → Captured → Refunded` (ou `Voided` antes da captura, `Declined` na recusa), com as transições de estado protegidas dentro da própria entidade de domínio.
-- **Ledger de partidas dobradas** — nenhum saldo é um campo mutável no banco; tudo é derivado de lançamentos contábeis imutáveis. Em toda captura, débitos = créditos (valor bruto = repasse ao lojista + taxa do gateway).
-- **Idempotência** — o header `Idempotency-Key` garante que uma retentativa de rede não cobre o cliente duas vezes, com proteção contra corrida via índice único no banco.
-- **Validação de cartão** — algoritmo de Luhn, detecção de bandeira (incluindo Elo e Hipercard) e checagem de validade.
-- **Consciência de PCI DSS** — número completo do cartão e CVV **nunca** são persistidos; apenas bandeira e últimos 4 dígitos.
+## Pré-requisitos
 
-**Segurança e confiabilidade**
-- **Autenticação por API key** — cada lojista recebe uma chave `pk_...` exibida uma única vez; apenas o hash SHA-256 é armazenado.
-- **Webhooks assinados (HMAC-SHA256)** — cada notificação leva o header `X-Webhook-Signature`; o lojista valida a autenticidade com o segredo `whsec_...` recebido no cadastro. Entrega em background com retentativas e backoff exponencial.
-- **Rate limiting** — 100 requisições/minuto por API key (particionado: um lojista abusivo não afeta os demais), com resposta `429` padronizada.
-- **Cabeçalhos de segurança e HTTPS** — `nosniff`, `X-Frame-Options`, CSP restritiva e `Cache-Control: no-store` em toda resposta; HSTS + redirecionamento para HTTPS fora do ambiente local; header `Server` removido.
-- **Health check real** — `/health` consulta o banco, pronto para load balancers e orquestradores.
+- [.NET SDK 10](https://dotnet.microsoft.com/download/dotnet/10.0) ou Docker Compose.
+- Para o provedor Stripe: conta Stripe em ambiente de testes, chave secreta `sk_test_...` e [Stripe CLI](https://docs.stripe.com/cli/install) para encaminhar webhooks locais.
 
-**Engenharia**
-- **Migrations do EF Core** — o schema do banco é versionado junto com o código.
-- **Logging estruturado com Serilog** — eventos pesquisáveis por propriedade, não texto solto.
-- **45 testes**: 36 unitários + 9 de integração com `WebApplicationFactory` (a API inteira exercitada via HTTP, incluindo middlewares e rate limiter).
-- **Warnings = erros** (`Directory.Build.props`): código com aviso não compila.
-- **Docker** multi-stage + docker-compose.
-- **CI no GitHub Actions** — build, testes e verificação de pacotes vulneráveis a cada push; **Dependabot** mantém as dependências atualizadas.
+O modo padrão é `fake`; não é preciso criar conta Stripe para executar o projeto e os testes.
 
-## Arquitetura
+## Executar localmente
 
-```mermaid
-graph LR
-    subgraph API["PaymentGateway.Api"]
-        MW["Middlewares<br/>(API key + erros + rate limit)"] --> C["Controllers"]
-    end
-    subgraph SVC["PaymentGateway.Services"]
-        PS["PaymentService"]
-        MS["MerchantService"]
-        WD["WebhookDispatcher<br/>(background)"]
-    end
-    subgraph DATA["PaymentGateway.Data"]
-        DB["AppDbContext<br/>(EF Core + Migrations)"]
-    end
-    subgraph DOM["PaymentGateway.Domain"]
-        E["Entidades + regras<br/>de negócio"]
-    end
+No PowerShell, na raiz do repositório:
 
-    C --> PS & MS
-    PS -. enfileira evento .-> WD
-    PS & MS --> DB
-    DB --> E
-    WD -- "POST assinado (HMAC)<br/>retry com backoff" --> EXT["Servidor do lojista"]
+```powershell
+dotnet run --project src/PaymentGateway.Api --launch-profile http
 ```
 
-Camadas em dependência linear — `Api → Services → Data → Domain` — cada uma conhece apenas a de baixo. O domínio é C# puro, sem dependência de framework.
+A API fica em `http://localhost:5223`; abra `http://localhost:5223/swagger`. Em **Development**, a aplicação aplica as migrations e cria um lojista demo em um banco novo:
 
-## Como rodar
-
-### Com o .NET SDK
-
-Pré-requisito: [.NET SDK 10](https://dotnet.microsoft.com/download)
-
-```bash
-dotnet run --project src/PaymentGateway.Api
+```text
+X-Api-Key: pk_test_demo_1234567890abcdef
 ```
 
-### Com Docker
+Essa chave é pública e serve somente para a demonstração. O cadastro anônimo de outros lojistas (`POST /api/v1/merchants`) também só está disponível em **Development/Testing**. Fora desses ambientes, não há cadastro público nem lojista demo; é preciso provisionar um lojista por um fluxo administrativo antes de servir requisições autenticadas.
 
-```bash
+### Docker Compose
+
+```powershell
 docker compose up --build
 ```
 
-A API sobe em `http://localhost:8080` (SDK: `http://localhost:5223`).
+A API fica em `http://localhost:8080/swagger`. O Compose roda em `Development` para esta demonstração e guarda o banco SQLite no volume nomeado `gateway-data`. `docker compose down` preserva os dados; remover o volume apaga pagamentos, chaves e eventos da demonstração. A imagem executa com usuário sem privilégios.
 
-Acesse **/swagger**. Em desenvolvimento, um lojista demo já vem criado com a API key:
+### Stripe Test Mode
 
-```
-pk_test_demo_1234567890abcdef
-```
+1. No painel da Stripe, ative o ambiente de testes e obtenha sua chave secreta `sk_test_...` (nunca `sk_live_...`). Instale a CLI e faça `stripe login`.
+2. Em outro terminal, encaminhe os [eventos snapshot](https://docs.stripe.com/webhooks#local-listener) para a API:
 
-Clique em **Authorize** no Swagger e cole a chave — ou use o arquivo [PaymentGateway.Api.http](src/PaymentGateway.Api/PaymentGateway.Api.http), que contém o fluxo completo pronto para executar no VS Code (extensão REST Client) ou no Visual Studio.
+   ```powershell
+   stripe listen --forward-to localhost:5223/api/v1/webhooks/stripe
+   ```
 
-### Rodar os testes
+   Para o Compose, use `localhost:8080` no lugar de `localhost:5223`. Copie o `whsec_...` exibido pela CLI. O segredo desse listener é diferente do segredo de um endpoint cadastrado no Dashboard e diferente do segredo HMAC de um lojista local.
+3. Para executar pelo SDK, configure as variáveis **no mesmo terminal que iniciará a API**:
 
-```bash
-dotnet test
-```
+   ```powershell
+   $env:Gateway__Processor = 'stripe'
+   $env:Stripe__SecretKey = 'sk_test_SUBSTITUA_PELA_SUA_CHAVE'
+   $env:Stripe__WebhookSecret = 'whsec_SUBSTITUA_PELO_SEGREDO_DA_CLI'
+   dotnet run --project src/PaymentGateway.Api --launch-profile http
+   ```
 
-### Criar uma nova migration
+   Para o Compose, copie `.env.example` para `.env`, preencha `GATEWAY_PROCESSOR=stripe`, `STRIPE_SECRET_KEY` e `STRIPE_WEBHOOK_SECRET`, e rode `docker compose up --build`. `.env` é ignorado pelo Git e pelo contexto de build da imagem.
 
-```bash
-dotnet tool restore
-dotnet dotnet-ef migrations add NomeDaMigration --project src/PaymentGateway.Data --startup-project src/PaymentGateway.Api
+A inicialização falha se o processador Stripe não receber uma chave `sk_test_` e um segredo `whsec_`. O adaptador também rejeita respostas da Stripe marcadas como `livemode`. Use um banco novo ao trocar `fake` por `stripe`: pagamentos antigos apontam para o provedor anterior. O simulador guarda seu próprio estado em memória; por isso, uma autorização `fake` ainda no SQLite após reiniciar pode não ser capturável ou cancelável. Para testar retomada de operações entre reinícios, use Stripe Test Mode.
+
+A reconciliação periódica da Stripe usa `PaymentReconciliation__Interval=00:05:00` e `PaymentReconciliation__BatchSize=50` como padrões configuráveis. Ela só consulta pagamentos cujo ID remoto já foi salvo. Se uma autorização continuar pendente **sem** `providerPaymentId` por mais de 23 horas, a API não a reenviará à Stripe: a chave idempotente do provedor pode ter expirado, e a repetição poderia criar outro pagamento. Esse caso exige um webhook tardio ou investigação e reconciliação manual; o worker periódico não consegue recuperá-lo sozinho.
+
+## Roteiro de demonstração
+
+O arquivo [PaymentGateway.Api.http](src/PaymentGateway.Api/PaymentGateway.Api.http) contém estas chamadas prontas para REST Client ou Visual Studio. Ajuste `@baseUrl` para `http://localhost:8080` se usar Docker.
+
+1. Autorize `15000` centavos em `BRL` com `paymentMethodId: "pm_card_visa"` e um `Idempotency-Key` novo. A resposta traz o ID local, `provider` e `providerPaymentId`. Em Stripe, o status esperado é `Authorized` após o intent alcançar `requires_capture`.
+2. Repita **a mesma** requisição e chave: a API devolve o mesmo pagamento. Tente a mesma chave com valor diferente: a API rejeita o conflito.
+3. Use o ID local retornado para `POST /capture` com **outra** chave de idempotência. Consulte `/api/v1/merchants/me/balance` e `/events`.
+4. Faça `POST /refund` com uma terceira chave. Consulte o saldo e os eventos novamente. Para exercitar `/void`, crie outro pagamento autorizado e cancele **antes** de capturá-lo.
+5. Experimente `pm_card_visa_chargeDeclined` para recusa e `pm_card_authenticationRequired` para `RequiresAction`. Sem frontend de autenticação 3D Secure, o pagamento `RequiresAction` não pode ser capturado neste roteiro.
+6. Com Stripe CLI rodando, observe a entrega no terminal e confira a transição via `GET /api/v1/payments/{id}`. O endpoint da API aceita apenas webhooks assinados e eventos de teste.
+
+Os identificadores `pm_card_...` acima são [PaymentMethods de teste documentados pela Stripe](https://docs.stripe.com/testing). O projeto permite apenas uma lista pequena desses identificadores; não envie dados de cartão no JSON.
+
+Exemplo mínimo de autorização:
+
+```http
+POST /api/v1/payments HTTP/1.1
+X-Api-Key: pk_test_demo_1234567890abcdef
+Idempotency-Key: pedido-0001-autorizar
+Content-Type: application/json
+
+{
+  "amountInCents": 15000,
+  "currency": "BRL",
+  "description": "Pedido #0001",
+  "paymentMethodId": "pm_card_visa"
+}
 ```
 
 ## Endpoints
 
-| Método | Rota | Descrição | Auth |
-|--------|------|-----------|:----:|
-| POST | `/api/v1/merchants` | Cadastra lojista, gera API key e segredo de webhook | — |
-| GET | `/api/v1/merchants/me` | Dados do lojista autenticado | 🔑 |
-| GET | `/api/v1/merchants/me/balance` | Saldo calculado a partir do ledger | 🔑 |
-| POST | `/api/v1/payments` | Autoriza um pagamento (aceita `Idempotency-Key`) | 🔑 |
-| GET | `/api/v1/payments` | Lista com paginação e filtro por status | 🔑 |
-| GET | `/api/v1/payments/{id}` | Consulta um pagamento | 🔑 |
-| POST | `/api/v1/payments/{id}/capture` | Captura (confirma a cobrança) | 🔑 |
-| POST | `/api/v1/payments/{id}/void` | Cancela autorização não capturada | 🔑 |
-| POST | `/api/v1/payments/{id}/refund` | Estorna pagamento capturado | 🔑 |
-| GET | `/api/v1/payments/{id}/events` | Trilha de eventos / status dos webhooks | 🔑 |
+| Método | Rota | Uso |
+| --- | --- | --- |
+| `GET` | `/health` | Verifica conexão com o banco. |
+| `POST` | `/api/v1/merchants` | Cadastro anônimo somente em Development/Testing; retorna API key uma vez. |
+| `GET` | `/api/v1/merchants/me` | Consulta lojista autenticado. |
+| `GET` | `/api/v1/merchants/me/balance` | Saldo demonstrativo derivado do ledger. |
+| `POST` | `/api/v1/payments` | Autoriza; `Idempotency-Key` obrigatória. |
+| `GET` | `/api/v1/payments` | Lista paginada e filtrável por status. |
+| `GET` | `/api/v1/payments/{id}` | Consulta e reconcilia estado pendente. |
+| `POST` | `/api/v1/payments/{id}/capture` | Captura; `Idempotency-Key` obrigatória. |
+| `POST` | `/api/v1/payments/{id}/void` | Cancela antes da captura; `Idempotency-Key` obrigatória. |
+| `POST` | `/api/v1/payments/{id}/refund` | Estorna totalmente após a captura; `Idempotency-Key` obrigatória. |
+| `GET` | `/api/v1/payments/{id}/events` | Eventos e tentativas de entrega ao lojista. |
+| `POST` | `/api/v1/webhooks/stripe` | Entrada pública autenticada por `Stripe-Signature`, apenas com provedor Stripe ativo. |
 
-## Cartões de teste
+Todas as rotas de lojista e pagamento exigem `X-Api-Key`. A demonstração aceita apenas `BRL`, com valores inteiros de 50 a 99.999.999 centavos. `Idempotency-Key` tem no máximo 100 caracteres e deve ser única por operação lógica; reutilizá-la com outra operação ou outros dados gera erro. A resposta HTTP de um pagamento novo é `201`, e uma repetição idempotente da criação retorna `200`.
 
-| Número | Resultado |
-|--------|-----------|
-| `4242 4242 4242 4242` | ✅ Aprovado (Visa) |
-| `5555 5555 5555 4444` | ✅ Aprovado (Mastercard) |
-| `4000 0000 0000 0002` | ❌ Recusado — `card_declined` |
-| `4000 0000 0000 9995` | ❌ Recusado — `insufficient_funds` |
-| `4000 0000 0000 9987` | ❌ Recusado — `lost_card` |
+### Webhooks do lojista
 
-Qualquer número que falhe no algoritmo de Luhn é rejeitado com **HTTP 422** antes mesmo de chegar ao "emissor".
+Ao cadastrar um lojista no ambiente de demonstração, `webhookUrl` é opcional. A API aceita URL **HTTPS pública na porta 443**, sem redirecionamentos; loopback HTTP(S) é permitido apenas em Development/Testing. A validação também bloqueia endereços não públicos no momento da conexão para reduzir SSRF. Se a URL for fornecida, o cadastro devolve `webhookSecret` uma única vez.
 
-## Validando a assinatura do webhook
+As notificações incluem `X-Webhook-Signature` (HMAC-SHA256 do corpo, prefixo `sha256=`) e `X-Webhook-Event-Id`. Confirme a assinatura usando o corpo recebido sem reserializar e compare em tempo constante. Guarde cada ID de evento processado para lidar com retentativas. O `whsec_...` do lojista valida **somente** os webhooks enviados por este gateway; o `whsec_...` da Stripe valida os webhooks **recebidos da Stripe**.
 
-Cada notificação enviada ao lojista inclui o header `X-Webhook-Signature`. Para validar:
+## Testes e engenharia
 
-```csharp
-// secret = o "whsec_..." recebido no cadastro
-var hash = HMACSHA256.HashData(
-    Encoding.UTF8.GetBytes(secret),
-    Encoding.UTF8.GetBytes(corpoDaRequisicao));
-
-var esperado = "sha256=" + Convert.ToHexStringLower(hash);
-var valido = CryptographicOperations.FixedTimeEquals(
-    Encoding.UTF8.GetBytes(esperado),
-    Encoding.UTF8.GetBytes(headerRecebido));
+```powershell
+dotnet restore
+dotnet build --no-restore --configuration Release
+dotnet test --no-build --configuration Release
 ```
 
-Se a assinatura bater, a notificação veio mesmo do gateway e não foi adulterada — mesmo mecanismo usado por Stripe e GitHub.
+O CI executa restore com auditoria NuGet, build, testes, validação do Compose e build da imagem. Os testes de Stripe usam um cliente HTTP simulado do SDK oficial; eles não dependem de credenciais. A confirmação contra a API da Stripe exige suas credenciais de teste.
 
-## Decisões técnicas
-
-| Decisão | Motivo |
-|---------|--------|
-| Valores monetários em **centavos (inteiro)** | Elimina erros de arredondamento de ponto flutuante; mesmo padrão da Stripe |
-| Saldo **derivado do ledger**, nunca armazenado | Auditabilidade total: cada centavo tem origem rastreável; impossível o saldo "desincronizar" |
-| Transições de estado **dentro da entidade** `Payment` | Nenhum serviço consegue, por engano, estornar algo não capturado — a regra mora num lugar só |
-| API key com **hash SHA-256** no banco | Se o banco vazar, as chaves não vazam junto (mesmo princípio de senha) |
-| Idempotência com **índice único** no banco | Funciona mesmo com requisições concorrentes — a constraint decide o vencedor |
-| Webhooks via **Channel + BackgroundService** | A API responde rápido; a entrega (lenta e falível) acontece em background com retry |
-| **Migrations** aplicadas na inicialização | Adequado a instância única; com réplicas, o passo migraria para o pipeline de deploy |
-| Rate limiting **particionado por API key** | Limite justo por cliente, não global |
-| SQLite | Zero configuração para rodar o projeto; em produção seria PostgreSQL (a troca é uma linha no `UseSqlite` + nova migration) |
-
-## Possíveis evoluções
-
-- Captura e estorno **parciais**
-- PostgreSQL + testes com Testcontainers
-- Relatório de conciliação diária (batch)
-- Outbox pattern para garantir entrega de webhooks após restart
-- Observabilidade com OpenTelemetry
+O SQLite mantém idempotência, ledger, IDs do provedor e outbox entre reinícios, mas foi escolhido para uma demonstração local de instância única. O worker deixa de tentar entregar um evento após cinco falhas; não existe interface de reenvio manual. A implantação distribuída exigiria revisar banco, recuperação operacional, provisionamento de lojistas e gestão de segredos. Em ambientes fora de Development, as migrations precisam ser aplicadas antes de subir a API.
 
 ## Licença
 

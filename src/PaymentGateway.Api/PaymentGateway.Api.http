@@ -1,98 +1,118 @@
-### Fluxo de demonstração completo do Payment Gateway.
-### Rode a API (dotnet run) e execute as requisições em ordem.
-### A API key abaixo é a do lojista demo criado automaticamente em desenvolvimento.
+### Payment Gateway — sandbox. Execute a API com dotnet run --launch-profile http.
+### Para Docker Compose, altere baseUrl para http://localhost:8080.
+### Após a autorização, substitua paymentId pelo campo id da resposta.
+### O cadastro demo é criado automaticamente apenas em Development com banco novo.
 
 @baseUrl = http://localhost:5223
 @apiKey = pk_test_demo_1234567890abcdef
+@paymentId = 00000000-0000-0000-0000-000000000000
+@voidPaymentId = 00000000-0000-0000-0000-000000000000
 
-### 0. Health check (consulta o banco de verdade)
+### 0. Saúde e identificação do sandbox
 GET {{baseUrl}}/health
 
-### 1. Cadastrar um novo lojista (endpoint público)
-###    Guarde a apiKey E o webhookSecret retornados — só aparecem UMA vez!
-###    O webhookSecret valida a assinatura HMAC (header X-Webhook-Signature)
-###    enviada em cada notificação de webhook.
+### 1. Autorizar R$ 150,00 com PaymentMethod de teste
+POST {{baseUrl}}/api/v1/payments
+Content-Type: application/json
+X-Api-Key: {{apiKey}}
+Idempotency-Key: demo-pedido-0001-autorizar
+
+{
+  "amountInCents": 15000,
+  "currency": "BRL",
+  "description": "Pedido demo 0001",
+  "paymentMethodId": "pm_card_visa"
+}
+
+### 2. Repetir exatamente a mesma requisição: retorna o mesmo pagamento (HTTP 200)
+POST {{baseUrl}}/api/v1/payments
+Content-Type: application/json
+X-Api-Key: {{apiKey}}
+Idempotency-Key: demo-pedido-0001-autorizar
+
+{
+  "amountInCents": 15000,
+  "currency": "BRL",
+  "description": "Pedido demo 0001",
+  "paymentMethodId": "pm_card_visa"
+}
+
+### 3. Consultar o pagamento (troque paymentId pelo id local do passo 1)
+GET {{baseUrl}}/api/v1/payments/{{paymentId}}
+X-Api-Key: {{apiKey}}
+
+### 4. Capturar; a chave de idempotência desta operação é diferente
+POST {{baseUrl}}/api/v1/payments/{{paymentId}}/capture
+X-Api-Key: {{apiKey}}
+Idempotency-Key: demo-pedido-0001-capturar
+
+### 5. Consultar saldo demonstrativo e eventos
+GET {{baseUrl}}/api/v1/merchants/me/balance
+X-Api-Key: {{apiKey}}
+
+###
+GET {{baseUrl}}/api/v1/payments/{{paymentId}}/events
+X-Api-Key: {{apiKey}}
+
+### 6. Estornar integralmente
+POST {{baseUrl}}/api/v1/payments/{{paymentId}}/refund
+X-Api-Key: {{apiKey}}
+Idempotency-Key: demo-pedido-0001-estornar
+
+### 7. Criar outra autorização para demonstrar o cancelamento antes da captura
+POST {{baseUrl}}/api/v1/payments
+Content-Type: application/json
+X-Api-Key: {{apiKey}}
+Idempotency-Key: demo-pedido-0002-autorizar
+
+{
+  "amountInCents": 4900,
+  "currency": "BRL",
+  "description": "Pedido demo 0002",
+  "paymentMethodId": "pm_card_visa"
+}
+
+### 8. Substitua voidPaymentId pelo id local do passo 7
+POST {{baseUrl}}/api/v1/payments/{{voidPaymentId}}/void
+X-Api-Key: {{apiKey}}
+Idempotency-Key: demo-pedido-0002-cancelar
+
+### 9. Recusa simulada pela Stripe / fake
+POST {{baseUrl}}/api/v1/payments
+Content-Type: application/json
+X-Api-Key: {{apiKey}}
+Idempotency-Key: demo-pedido-0003-recusa
+
+{
+  "amountInCents": 9900,
+  "currency": "BRL",
+  "description": "Pedido demo 0003",
+  "paymentMethodId": "pm_card_visa_chargeDeclined"
+}
+
+### 10. Exige autenticação adicional; sem frontend, não capture este pagamento
+POST {{baseUrl}}/api/v1/payments
+Content-Type: application/json
+X-Api-Key: {{apiKey}}
+Idempotency-Key: demo-pedido-0004-3ds
+
+{
+  "amountInCents": 2500,
+  "currency": "BRL",
+  "description": "Pedido demo 0004",
+  "paymentMethodId": "pm_card_authenticationRequired"
+}
+
+### 11. Listar pagamentos
+GET {{baseUrl}}/api/v1/payments?page=1&pageSize=10
+X-Api-Key: {{apiKey}}
+
+### Opcional: cadastrar lojista local. E-mail deve ser único a cada execução.
+### webhookUrl é opcional. Se usar, HTTPS público na porta 443 ou localhost no ambiente Development.
 POST {{baseUrl}}/api/v1/merchants
 Content-Type: application/json
 
 {
-  "name": "Minha Loja Virtual",
-  "email": "contato@minhaloja.com.br",
-  "webhookUrl": "https://webhook.site/coloque-seu-id-aqui"
+  "name": "Loja de Demonstração",
+  "email": "loja-unica@example.com"
 }
-
-### 2. Autorizar um pagamento de R$ 150,00 (cartão de teste aprovado)
-POST {{baseUrl}}/api/v1/payments
-Content-Type: application/json
-X-Api-Key: {{apiKey}}
-Idempotency-Key: pedido-0001
-
-{
-  "amountInCents": 15000,
-  "currency": "BRL",
-  "description": "Pedido #0001 - Tênis de corrida",
-  "card": {
-    "number": "4242424242424242",
-    "holderName": "NEEMIAS SILVA",
-    "expMonth": 12,
-    "expYear": 2030,
-    "cvv": "123"
-  }
-}
-
-### 3. Reenviar a MESMA requisição (mesma Idempotency-Key)
-###    -> retorna 200 com o MESMO pagamento, sem cobrar duas vezes
-POST {{baseUrl}}/api/v1/payments
-Content-Type: application/json
-X-Api-Key: {{apiKey}}
-Idempotency-Key: pedido-0001
-
-{
-  "amountInCents": 15000,
-  "currency": "BRL",
-  "description": "Pedido #0001 - Tênis de corrida",
-  "card": {
-    "number": "4242424242424242",
-    "holderName": "NEEMIAS SILVA",
-    "expMonth": 12,
-    "expYear": 2030,
-    "cvv": "123"
-  }
-}
-
-### 4. Tentar pagar com cartão recusado pelo emissor
-POST {{baseUrl}}/api/v1/payments
-Content-Type: application/json
-X-Api-Key: {{apiKey}}
-
-{
-  "amountInCents": 9900,
-  "description": "Pedido #0002",
-  "card": {
-    "number": "4000000000000002",
-    "holderName": "NEEMIAS SILVA",
-    "expMonth": 12,
-    "expYear": 2030,
-    "cvv": "123"
-  }
-}
-
-### 5. Listar pagamentos
-GET {{baseUrl}}/api/v1/payments?page=1&pageSize=10
-X-Api-Key: {{apiKey}}
-
-### 6. Capturar o pagamento autorizado (troque o ID pelo retornado no passo 2)
-POST {{baseUrl}}/api/v1/payments/COLOQUE-O-ID-AQUI/capture
-X-Api-Key: {{apiKey}}
-
-### 7. Consultar o saldo do lojista (valor capturado - taxa de 2,5%)
-GET {{baseUrl}}/api/v1/merchants/me/balance
-X-Api-Key: {{apiKey}}
-
-### 8. Estornar o pagamento capturado
-POST {{baseUrl}}/api/v1/payments/COLOQUE-O-ID-AQUI/refund
-X-Api-Key: {{apiKey}}
-
-### 9. Ver a trilha de eventos do pagamento (auditoria + webhooks)
-GET {{baseUrl}}/api/v1/payments/COLOQUE-O-ID-AQUI/events
-X-Api-Key: {{apiKey}}
