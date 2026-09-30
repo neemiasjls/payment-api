@@ -1,9 +1,10 @@
 namespace PaymentGateway.Domain.Entities;
 
 /// <summary>
-/// Garante idempotência na criação de pagamentos: se o cliente reenviar a
-/// mesma requisição (mesma Idempotency-Key), devolvemos o pagamento original
-/// em vez de cobrar duas vezes. Essencial em redes instáveis.
+/// Garante idempotência nas operações que alteram pagamentos (authorize,
+/// capture, void e refund): se o cliente reenviar a mesma requisição (mesma
+/// Idempotency-Key), devolvemos o resultado original em vez de repetir a
+/// operação. Essencial em redes instáveis.
 /// </summary>
 public class IdempotencyRecord
 {

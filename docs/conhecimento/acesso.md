@@ -21,5 +21,5 @@ Código: `src/PaymentGateway.Domain/Entities/Merchant.cs`, `src/PaymentGateway.S
 
 ## Limite de requisições
 
-- **ACS-09** (D) Rate limit global de `Gateway:RateLimitPerMinute` (padrão 100) requisições por minuto POR IP de origem, janela fixa, sem fila; excesso → 429 (ProblemDetails). Histórico em DEC-08. ⚠ ver PEN-01. Fonte: README §O que está implementado; Program.cs:81-111; appsettings.json:7; teste Invalid_api_keys_share_the_source_ip_rate_limit.
+- **ACS-09** (D) Rate limit global de `Gateway:RateLimitPerMinute` (padrão 100) requisições por minuto POR IP de origem, janela fixa, sem fila; excesso → 429 (ProblemDetails). Histórico em DEC-08. Fonte: README §O que está implementado; Program.cs:81-111; appsettings.json:7; teste Invalid_api_keys_share_the_source_ip_rate_limit.
 - **ACS-10** (I) O rate limiter roda antes da autenticação, então chaves inválidas também consomem o limite do IP. Fonte: Program.cs:173, 181.

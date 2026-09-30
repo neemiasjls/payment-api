@@ -13,11 +13,11 @@ Idempotência em [idempotencia.md](idempotencia.md); lançamentos em [ledger.md]
 
 ## Estados e transições
 
-- **PAG-04** (I) Estados: `Pending`, `RequiresAction`, `Authorized`, `Captured`, `Voided`, `Refunded`, `Declined`, gravados como texto no banco. Porquê: texto é legível e estável se a ordem do enum mudar. Fonte: PaymentStatus.cs:9-18; AppDbContext.cs:43-45. ⚠ ver PEN-02.
-- **PAG-05** (I) Transições permitidas: Pending/RequiresAction → Pending/RequiresAction/Authorized/Declined; Authorized → Captured, Voided ou Declined (recusa tardia do provedor); Captured → Refunded. Voided, Refunded e Declined são finais. Porquê: a entidade controla as transições, independente de quem chama. Fonte: Payment.cs:68-84, 104-112, 151-190.
+- **PAG-04** (I) Estados: `Pending`, `RequiresAction`, `Authorized`, `Captured`, `Voided`, `Refunded`, `Declined`, gravados como texto no banco. Porquê: texto é legível e estável se a ordem do enum mudar. Fonte: PaymentStatus.cs:10-19; AppDbContext.cs:43-45.
+- **PAG-05** (I) Transições permitidas: Pending/RequiresAction → Pending/RequiresAction/Authorized/Declined; Authorized → Captured, Voided ou Declined (recusa tardia do provedor); Captured → Refunded. Voided, Refunded e Declined são finais. Porquê: a entidade controla as transições, independente de quem chama. Fonte: Payment.cs:68-84, 104-112, 115-154.
 - **PAG-06** (I) Na reconciliação, se o provedor já estiver em Captured/Voided/Refunded enquanto o local está Pending, o pagamento passa por Authorized e pelas transições intermediárias, gerando os lançamentos de captura/estorno. Porquê: nunca pular regras da entidade nem o ledger. Fonte: PaymentService.cs:351-375.
 - **PAG-07** (D) `Pending` e `RequiresAction` não contam como autorização concluída; não podem ser capturados. `RequiresAction` pode devolver `clientSecret`. Fonte: README §O que está implementado; teste Stripe_DoesNotTreatPendingOrActionAsAuthorized.
-- **PAG-08** (D) Captura e void só a partir de `Authorized`; estorno só a partir de `Captured` e sempre total (sem estorno parcial). Fonte: README §Endpoints; Payment.cs:151-190; PaymentService.cs:169-171.
+- **PAG-08** (D) Captura e void só a partir de `Authorized`; estorno só a partir de `Captured` e sempre total (sem estorno parcial). Fonte: README §Endpoints; Payment.cs:115-154; PaymentService.cs:169-171.
 - **PAG-09** (I) Repetir captura/void/estorno de um pagamento que já está no estado-alvo devolve o estado atual sem nova chamada ao provedor. Porquê: retentativa do cliente é segura. Fonte: PaymentService.cs:157-164; teste Capture_DuasVezes_NaoDuplicaLedger.
 
 ## Confiabilidade

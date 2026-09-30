@@ -19,7 +19,7 @@ Comece por esta tabela e leia só o arquivo do domínio da tarefa.
 | Glossário | [glossario.md](glossario.md) | — | termos de pagamentos |
 | Pendências | [pendencias.md](pendencias.md) (PEN) | — | conflitos, dúvidas, limpezas |
 
-Pendências abertas: 6. Última manutenção: 2026-09-30.
+Pendências abertas: 1. Última manutenção: 2026-09-30.
 
 ## Legenda de confiança
 

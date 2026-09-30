@@ -11,7 +11,7 @@ API de pagamentos em C# e .NET 10 para portfólio. Ela oferece autorização, ca
 - A API recebe apenas `paymentMethodId` de teste. Ela não recebe número de cartão nem CVV. O provedor e o ID do pagamento no provedor ficam persistidos.
 - Cada chamada que altera um pagamento exige `Idempotency-Key`. A mesma chave com outros dados ou outra operação é rejeitada. As chamadas à Stripe usam chaves estáveis por pagamento e operação.
 - Estados `Pending` e `RequiresAction` não são tratados como autorização concluída. Uma resposta de ação adicional pode incluir `clientSecret`; sem uma interface de autenticação, o roteiro abaixo apenas demonstra esse estado.
-- Versão de concorrência no pagamento e índices únicos protegem as transições e os lançamentos do ledger contra duplicação.
+- A versão de concorrência no pagamento protege as transições (e, com elas, os lançamentos do ledger) contra duplicação; índices únicos protegem as chaves de idempotência.
 - O endpoint de entrada da Stripe valida a assinatura do corpo original, rejeita eventos `livemode`, deduplica IDs de evento e consulta o estado atual do provedor para reconciliar o pagamento.
 - Com Stripe ativo, um worker também consulta na Stripe pagamentos `Pending`, `RequiresAction`, `Authorized` ou `Captured` com `providerPaymentId` ao iniciar e, por padrão, a cada cinco minutos em lotes de 50. Isso permite detectar mudanças mesmo se um webhook não chegar.
 - Eventos destinados ao webhook do lojista são gravados no SQLite junto com a mudança de estado. O worker varre pendências após reinício, reserva cada entrega e tenta novamente até cinco vezes. O consumidor deve deduplicar pelo header `X-Webhook-Event-Id`: entrega é **pelo menos uma vez**, não exatamente uma vez.

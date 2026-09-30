@@ -11,6 +11,6 @@ public class GatewayOptions
     /// </summary>
     public int FeeBps { get; set; } = 250;
 
-    /// <summary>Máximo de requisições por minuto por API key (proteção contra abuso).</summary>
+    /// <summary>Máximo de requisições por minuto por IP de origem (proteção contra abuso).</summary>
     public int RateLimitPerMinute { get; set; } = 100;
 }

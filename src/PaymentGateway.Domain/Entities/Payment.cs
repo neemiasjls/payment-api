@@ -111,42 +111,6 @@ public class Payment
         Version++;
     }
 
-    public static Payment Authorize(
-        Guid merchantId, long amountInCents, string currency,
-        string cardLast4, string cardBrand, string? description)
-    {
-        if (amountInCents <= 0)
-            throw new DomainException("O valor do pagamento deve ser maior que zero.");
-
-        return new Payment
-        {
-            MerchantId = merchantId,
-            AmountInCents = amountInCents,
-            Currency = currency,
-            CardLast4 = cardLast4,
-            CardBrand = cardBrand,
-            Description = description,
-            Status = PaymentStatus.Authorized
-        };
-    }
-
-    public static Payment Decline(
-        Guid merchantId, long amountInCents, string currency,
-        string cardLast4, string cardBrand, string? description, string reason)
-    {
-        return new Payment
-        {
-            MerchantId = merchantId,
-            AmountInCents = amountInCents,
-            Currency = currency,
-            CardLast4 = cardLast4,
-            CardBrand = cardBrand,
-            Description = description,
-            Status = PaymentStatus.Declined,
-            DeclineReason = reason
-        };
-    }
-
     /// <summary>Confirma a cobrança de um pagamento autorizado (o dinheiro "entra").</summary>
     public void Capture()
     {
