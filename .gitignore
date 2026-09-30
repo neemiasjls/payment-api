@@ -494,3 +494,7 @@ API_banco/
 
 # Logs dos scripts de inicializacao
 logs/
+
+# Configuracao local do assistente
+CLAUDE.local.md
+.claude/
